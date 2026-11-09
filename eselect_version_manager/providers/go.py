@@ -2,10 +2,94 @@
 
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .base import BaseProvider
 from ..models import InstalledPackage
 from ..errors import VersionManagerError, ExitCode
+
+
+def find_go_native_file(start_dir: str) -> Tuple[str, str]:
+    """
+    Find applicable Go native configuration file with workspace precedence.
+    Ascends from start_dir checking for go.work, then go.mod.
+    Returns (file_type, file_path) where file_type is 'go.work' or 'go.mod'.
+    """
+    canonical_start = os.path.realpath(os.path.abspath(start_dir))
+
+    # 1. Search upwards for go.work (workspace mode has highest precedence)
+    curr = canonical_start
+    visited = set()
+    while curr and curr not in visited:
+        visited.add(curr)
+        gowork = os.path.join(curr, "go.work")
+        if os.path.isfile(gowork):
+            return ("go.work", gowork)
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+
+    # 2. Search upwards for go.mod (nearest module)
+    curr = canonical_start
+    visited = set()
+    while curr and curr not in visited:
+        visited.add(curr)
+        gomod = os.path.join(curr, "go.mod")
+        if os.path.isfile(gomod):
+            return ("go.mod", gomod)
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+
+    raise VersionManagerError(
+        f"cannot resolve go from-file: neither 'go.work' nor 'go.mod' found in '{start_dir}' or any parent directory",
+        exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
+        details={
+            "start_dir": start_dir,
+            "suggestion": "create a go.mod or specify explicit version in .eselect.conf"
+        }
+    )
+
+
+def parse_go_directives(target_file: str) -> Tuple[Optional[str], Optional[str]]:
+    """Parse (minimum_go_ver, preferred_toolchain_ver) from go.work or go.mod."""
+    go_ver = None
+    toolchain_ver = None
+
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("toolchain "):
+                    # e.g. "toolchain go1.22.4"
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        val = parts[1]
+                        if val.startswith("go"):
+                            toolchain_ver = val[2:]
+                        else:
+                            toolchain_ver = val
+                elif stripped.startswith("go "):
+                    # e.g. "go 1.22" or "go 1.22.0"
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        go_ver = parts[1]
+    except OSError as e:
+        raise VersionManagerError(
+            f"failed to read {target_file}: {e}",
+            exit_code=ExitCode.GENERAL_ERROR,
+            details={"file": target_file}
+        )
+
+    if not go_ver and not toolchain_ver:
+        raise VersionManagerError(
+            f"no 'go' or 'toolchain' directive found in '{target_file}'",
+            exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
+            details={"file": target_file}
+        )
+
+    return (go_ver, toolchain_ver)
 
 
 class GoProvider(BaseProvider):
@@ -27,73 +111,76 @@ class GoProvider(BaseProvider):
     def supports_native_file(self) -> bool:
         return True
 
-    def parse_native_version_file(self, project_root: str) -> Optional[str]:
+    def parse_native_version_file(self, project_root: str) -> str:
         """
         Parse Go native requirements from go.work or go.mod.
         Understands workspace priority over module, and toolchain directive over go directive.
         Treats 'go' directive as minimum required version (>=), not an exact pin.
         """
-        gowork_path = os.path.join(project_root, "go.work")
-        gomod_path = os.path.join(project_root, "go.mod")
-
-        target_file = None
-        if os.path.isfile(gowork_path):
-            target_file = gowork_path
-        elif os.path.isfile(gomod_path):
-            target_file = gomod_path
-        else:
-            raise VersionManagerError(
-                f"cannot resolve go from-file: neither 'go.work' nor 'go.mod' found in '{project_root}'",
-                exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
-                details={
-                    "project_root": project_root,
-                    "checked_files": f"{gowork_path}, {gomod_path}",
-                    "suggestion": "create a go.mod or specify explicit version in .eselect.conf"
-                }
-            )
-
-        go_ver = None
-        toolchain_ver = None
-
-        try:
-            with open(target_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    stripped = line.strip()
-                    if stripped.startswith("toolchain "):
-                        # e.g. "toolchain go1.22.4"
-                        parts = stripped.split()
-                        if len(parts) >= 2:
-                            val = parts[1]
-                            if val.startswith("go"):
-                                toolchain_ver = val[2:]
-                            else:
-                                toolchain_ver = val
-                    elif stripped.startswith("go "):
-                        # e.g. "go 1.22" or "go 1.22.0"
-                        parts = stripped.split()
-                        if len(parts) >= 2:
-                            go_ver = parts[1]
-        except OSError as e:
-            raise VersionManagerError(
-                f"failed to read {target_file}: {e}",
-                exit_code=ExitCode.GENERAL_ERROR,
-                details={"file": target_file}
-            )
-
-        # Toolchain directive takes precedence if specified
+        _, target_file = find_go_native_file(project_root)
+        go_ver, toolchain_ver = parse_go_directives(target_file)
         if toolchain_ver:
             return toolchain_ver
+        return f">={go_ver}"
 
-        # Otherwise go directive specifies minimum required language series
-        # (e.g. '1.22' matches Go 1.22 series, allowing patch updates without being an exact pin)
+    def resolve_native_package(
+        self,
+        start_dir: str,
+        installed_packages: List[InstalledPackage]
+    ) -> Tuple[InstalledPackage, str]:
+        """
+        Resolve best installed package satisfying native Go directives.
+        Prefers exact toolchain directive if installed; otherwise satisfies minimum requirement.
+        """
+        from ..portage_backend import match_packages
+
+        file_type, target_file = find_go_native_file(start_dir)
+        go_ver, toolchain_ver = parse_go_directives(target_file)
+
+        # 1. If toolchain directive is specified, it represents the preferred toolchain
+        if toolchain_ver:
+            exact_matches = match_packages(installed_packages, self.package_atom, toolchain_ver)
+            if exact_matches:
+                return (exact_matches[-1], f"toolchain {toolchain_ver} ({file_type})")
+
+            # Fall back to newer installed toolchain satisfying >= toolchain_ver
+            range_matches = match_packages(installed_packages, self.package_atom, f">={toolchain_ver}")
+            if range_matches:
+                return (range_matches[-1], f">={toolchain_ver} ({file_type})")
+
+        # 2. 'go' directive represents minimum required version
         if go_ver:
-            return go_ver
+            matches = match_packages(installed_packages, self.package_atom, f">={go_ver}")
+            if matches:
+                return (matches[-1], f">={go_ver} ({file_type})")
 
-        raise VersionManagerError(
-            f"no 'go' or 'toolchain' directive found in '{target_file}'",
-            exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
-            details={"file": target_file}
+        # No compatible toolchain found
+        req_desc = f"toolchain {toolchain_ver}" if toolchain_ver else f"go >={go_ver}"
+        installed_strs = [f"{p.version} (slot {p.slot})" for p in installed_packages]
+        from ..errors import NoMatchingVersionError
+        raise NoMatchingVersionError(
+            tool=self.name,
+            requested=f"{req_desc} from {target_file}",
+            provider=self.package_atom,
+            installed=installed_strs,
+            details={
+                "source": target_file,
+                "reason": f"no installed {self.package_atom} package satisfies minimum version requirement"
+            }
         )
+
+    def validate_executable(self, package: InstalledPackage, command: str, candidate_path: str) -> bool:
+        if super().validate_executable(package, command, candidate_path):
+            return True
+
+        if package.slot and f"go-{package.slot}" in candidate_path:
+            return True
+        if package.slot and f"go/{package.slot}" in candidate_path:
+            return True
+        if package.version and package.version in candidate_path:
+            return True
+
+        return False
 
     def get_environment(self, package: InstalledPackage, executable_path: str) -> Dict[str, str]:
         env = {
@@ -101,8 +188,6 @@ class GoProvider(BaseProvider):
             "GOTOOLCHAIN": "local",
         }
 
-        # Detect GOROOT if installed in /usr/lib/go...
-        # If executable is e.g. /usr/lib/go/1.22/bin/go -> GOROOT is /usr/lib/go/1.22
         parent_bin = os.path.dirname(executable_path)
         if os.path.basename(parent_bin) == "bin":
             potential_goroot = os.path.dirname(parent_bin)

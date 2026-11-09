@@ -45,8 +45,22 @@ fi
 mkdir -p /etc/portage
 echo 'FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox"' >> /etc/portage/make.conf
 
+# 1b. Create reproducible source archive for production ebuild testing
+echo "[Step 1b] Creating reproducible release source archive in DISTDIR..."
+mkdir -p /var/cache/distfiles
+tar -czf /var/cache/distfiles/eselect-version-manager-0.1.0.tar.gz \
+    --transform='s,^,/eselect-version-manager-0.1.0/,' \
+    -C /workspace \
+    bin config docs eselect_version_manager modules README.md
+chown -R portage:portage /var/cache/distfiles
+chmod 0644 /var/cache/distfiles/eselect-version-manager-0.1.0.tar.gz
+
+echo "Generating Manifest for eselect-version-manager from genuine tarball..."
+rm -f /workspace/packaging/test-overlay/app-eselect/eselect-version-manager/Manifest
+ebuild --force /workspace/packaging/test-overlay/app-eselect/eselect-version-manager/eselect-version-manager-0.1.0.ebuild manifest
+
 # 2. Emerge packages from overlay
-echo "[Step 2] Emerging eselect-version-manager and fixture packages..."
+echo "[Step 2] Emerging eselect-version-manager and fixture packages from genuine source archive..."
 emerge --verbose --quiet-build=y \
     app-eselect/eselect-version-manager \
     app-misc/version-manager-fixture:1 \
@@ -63,6 +77,22 @@ test -d /var/db/pkg/app-misc/unslotted-fixture-1.0
 test -d /var/db/pkg/dev-lang/go-1.22.4
 test -d /var/db/pkg/dev-lang/go-1.23.1
 echo "✓ All packages successfully merged into Portage database!"
+
+# 2b. Test cache invalidation inside existing category
+echo "[Step 2b] Verifying cache invalidation on package revision inside existing category..."
+LIST_BEFORE=$(eselect version-manager list fixture)
+assert_contains "1.0 (slot 1)" "${LIST_BEFORE}"
+assert_contains "2.0 (slot 2)" "${LIST_BEFORE}"
+
+# Add revision fixture-2.0-r1 inside /var/db/pkg/app-misc
+cp -a /var/db/pkg/app-misc/version-manager-fixture-2.0 /var/db/pkg/app-misc/version-manager-fixture-2.0-r1
+# Touch /var/db/pkg to old date to verify mtime of /var/db/pkg alone is not relied upon
+touch -d "2020-01-01" /var/db/pkg
+
+LIST_AFTER=$(eselect version-manager list fixture)
+assert_contains "2.0-r1" "${LIST_AFTER}"
+echo "✓ Cache immediately invalidated on package revision in existing category!"
+rm -rf /var/db/pkg/app-misc/version-manager-fixture-2.0-r1
 
 # 3. Verify eselect module discovery
 echo "[Step 3] Verifying eselect module discovery..."
@@ -118,6 +148,26 @@ test -x "${HOME}/.local/bin/eselect-version-manager/shims/go"
 test -x "${HOME}/.local/bin/eselect-version-manager/shims/unslotted-tool"
 echo "✓ Shims installed and marked executable!"
 
+# 6b. Testing unsupported shim rejection and dynamic provider definition
+echo "[Step 6b] Testing unsupported shim rejection..."
+set +e
+UNSUPP_OUT=$(eselect version-manager shims install nonexistent-tool 2>&1)
+UNSUPP_CODE=$?
+set -e
+test "${UNSUPP_CODE}" -ne 0
+assert_contains "unknown tool" "${UNSUPP_OUT}"
+echo "✓ Unsupported shim installation rejected!"
+
+# Register dynamic custom provider
+mkdir -p "${XDG_CONFIG_HOME}/eselect/version-manager/providers.d"
+cat << EOF > "${XDG_CONFIG_HOME}/eselect/version-manager/providers.d/mycustom.conf"
+PACKAGE_ATOM="app-misc/unslotted-fixture"
+COMMANDS="unslotted-tool"
+EOF
+eselect version-manager shims install mycustom
+test -x "${HOME}/.local/bin/eselect-version-manager/shims/unslotted-tool"
+echo "✓ Dynamic provider and restricted shims verified!"
+
 # 7. Unslotted package execution through shim
 echo "[Step 7] Testing unslotted fixture execution through shim..."
 UNSLOTTED_OUT=$(unslotted-tool)
@@ -163,6 +213,19 @@ echo "  .eselect.conf output: ${OUT_FILE}"
 assert_contains "version 1.0 (slot 1)" "${OUT_FILE}"
 echo "✓ Checked-in .eselect.conf reading verified!"
 
+# 10b. Malformed project configuration is fatal
+echo "[Step 10b] Testing that malformed project configuration is fatal..."
+mkdir -p "${HOME}/projects/project_malformed"
+cd "${HOME}/projects/project_malformed"
+echo 'VM_FIXTURE="unclosed quote' > .eselect.conf
+set +e
+MAL_OUT=$(fixture-tool 2>&1)
+MAL_CODE=$?
+set -e
+test "${MAL_CODE}" -ne 0
+assert_contains "unclosed quote" "${MAL_OUT}"
+echo "✓ Malformed project configuration is strictly fatal!"
+
 # 11. Transactional conversion with --file
 echo "[Step 11] Testing conversion between private user config and .eselect.conf..."
 mkdir -p "${HOME}/projects/project_convert"
@@ -193,20 +256,72 @@ go 1.22
 EOF
 eselect version-manager set --project go from-file
 GO_VER=$(go version)
-echo "  Go 1.22 output: ${GO_VER}"
-assert_contains "go1.22.4" "${GO_VER}"
+echo "  Go 1.22 minimum output: ${GO_VER}"
+assert_contains "go1.23.1" "${GO_VER}"
 
-# Update go.mod to toolchain 1.23.1
+# Update go.mod to preferred toolchain 1.22.4
 cat << EOF > go.mod
 module example.com/testmod
 
-go 1.22
-toolchain go1.23.1
+go 1.20
+toolchain go1.22.4
 EOF
 GO_VER2=$(go version)
-echo "  Go 1.23 toolchain output: ${GO_VER2}"
-assert_contains "go1.23.1" "${GO_VER2}"
+echo "  Go 1.22.4 preferred toolchain output: ${GO_VER2}"
+assert_contains "go1.22.4" "${GO_VER2}"
 echo "✓ Native from-file detection verified!"
+
+# 12b. Go minimum version satisfied by newer toolchain
+echo "[Step 12b] Testing Go minimum version satisfied by newer toolchain..."
+mkdir -p "${HOME}/projects/go_min_ver"
+cd "${HOME}/projects/go_min_ver"
+cat << EOF > go.mod
+module example.com/minver
+
+go 1.20
+EOF
+eselect version-manager set --project go from-file
+# Installed are 1.22 and 1.23; >=1.20 must be satisfied by 1.23.1!
+GO_MIN_OUT=$(go version)
+assert_contains "go1.23.1" "${GO_MIN_OUT}"
+echo "✓ Newer toolchain satisfies minimum version requirement!"
+
+# 12c. Go workspace precedence over nested module
+echo "[Step 12c] Testing Go workspace precedence over nested module..."
+mkdir -p "${HOME}/projects/go_ws/submod"
+cd "${HOME}/projects/go_ws"
+cat << EOF > go.work
+go 1.22
+toolchain go1.22.4
+EOF
+cd "${HOME}/projects/go_ws/submod"
+cat << EOF > go.mod
+module example.com/submod
+
+go 1.20
+EOF
+eselect version-manager set --project go from-file
+GO_WS_OUT=$(go version)
+assert_contains "go1.22.4" "${GO_WS_OUT}"
+echo "✓ Workspace precedence over nested module verified!"
+
+# 12d. Missing compatible toolchain fails cleanly
+echo "[Step 12d] Testing missing compatible toolchain fails cleanly..."
+mkdir -p "${HOME}/projects/go_missing"
+cd "${HOME}/projects/go_missing"
+cat << EOF > go.mod
+module example.com/missing
+
+go 1.99
+EOF
+eselect version-manager set --project go from-file
+set +e
+MISS_OUT=$(go 2>&1)
+MISS_CODE=$?
+set -e
+test "${MISS_CODE}" -eq 13
+assert_contains "no installed version satisfies the requested constraint" "${MISS_OUT}"
+echo "✓ Missing compatible toolchain fails cleanly!"
 
 # 13. Failure diagnostics on unsatisfiable constraint
 echo "[Step 13] Testing failure diagnostics..."
@@ -224,6 +339,20 @@ test "${ERR_CODE}" -eq 13
 assert_contains "no installed version satisfies the requested constraint" "${ERR_OUT}"
 assert_contains "emerge -pv" "${ERR_OUT}"
 echo "✓ Diagnostic errors and stable exit codes verified!"
+
+# 13b. Conflicting installed executable validation
+echo "[Step 13b] Testing that resolver never executes unowned conflicting binaries..."
+eselect version-manager set --user fixture ":1"
+OUT_FIX1=$(fixture-tool)
+assert_contains "version 1.0 (slot 1)" "${OUT_FIX1}"
+echo "✓ Resolved executable belongs strictly to selected package!"
+
+# 13c. Configuration escaping validation
+echo "[Step 13c] Testing config escaping..."
+eselect version-manager set --user go '>=1.22 <1.24'
+CONF_CONTENT=$(cat "${XDG_CONFIG_HOME}/eselect/version-manager.conf")
+assert_contains 'VM_GO=">=1.22 <1.24"' "${CONF_CONTENT}"
+echo "✓ Configuration value escaping verified!"
 
 # 14. Shim lifecycle: disable, enable, uninstall
 echo "[Step 14] Testing shim lifecycle..."

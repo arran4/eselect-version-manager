@@ -6,7 +6,7 @@ import stat
 from typing import Dict, List, Optional, Tuple
 
 from .config import get_shims_dir, get_state_dir, atomic_write_file
-from .errors import VersionManagerError, ExitCode
+from .errors import VersionManagerError, UnknownToolError, ExitCode
 from .providers.registry import ProviderRegistry, get_default_registry
 
 
@@ -78,6 +78,7 @@ class ShimManager:
         """
         Install executable shims in $HOME/.local/bin/eselect-version-manager/shims/.
         Ensures shims are marked executable and enabled.
+        Rejects tools not supported by any registered provider.
         """
         os.makedirs(self.shims_dir, exist_ok=True)
         installed = []
@@ -85,10 +86,15 @@ class ShimManager:
 
         for item in tools_or_commands:
             provider = self.registry.find_provider_for_command(item)
-            if provider:
-                cmds = provider.commands if item == provider.name else [item]
-            else:
-                cmds = [item]
+            if not provider:
+                raise UnknownToolError(
+                    item,
+                    details={
+                        "available_tools": ", ".join(self.registry.list_tools()),
+                        "suggestion": f"create a provider configuration in /etc/eselect/version-manager/providers.d/{item}.conf or ~/.config/eselect/version-manager/providers.d/{item}.conf"
+                    }
+                )
+            cmds = provider.commands if item == provider.name else [item]
 
             for cmd in cmds:
                 shim_path = os.path.join(self.shims_dir, cmd)
@@ -96,7 +102,7 @@ class ShimManager:
                 atomic_write_file(shim_path, content, mode=0o755)
                 # Ensure enabled upon install
                 disabled_set.discard(cmd)
-                disabled_set.discard(provider.name if provider else item)
+                disabled_set.discard(provider.name)
                 installed.append(cmd)
 
         save_disabled_shims(disabled_set)
@@ -109,11 +115,15 @@ class ShimManager:
 
         for item in tools_or_commands:
             provider = self.registry.find_provider_for_command(item)
-            cmds = provider.commands if provider and item == provider.name else [item]
+            if not provider:
+                raise UnknownToolError(
+                    item,
+                    details={"available_tools": ", ".join(self.registry.list_tools())}
+                )
+            cmds = provider.commands if item == provider.name else [item]
             for cmd in cmds:
                 disabled_set.discard(cmd)
-                if provider:
-                    disabled_set.discard(provider.name)
+                disabled_set.discard(provider.name)
                 enabled.append(cmd)
 
         save_disabled_shims(disabled_set)
@@ -129,12 +139,16 @@ class ShimManager:
 
         for item in tools_or_commands:
             provider = self.registry.find_provider_for_command(item)
-            cmds = provider.commands if provider and item == provider.name else [item]
+            if not provider:
+                raise UnknownToolError(
+                    item,
+                    details={"available_tools": ", ".join(self.registry.list_tools())}
+                )
+            cmds = provider.commands if item == provider.name else [item]
             for cmd in cmds:
                 disabled_set.add(cmd)
                 disabled.append(cmd)
-            if provider:
-                disabled_set.add(provider.name)
+            disabled_set.add(provider.name)
 
         save_disabled_shims(disabled_set)
         return disabled

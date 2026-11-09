@@ -40,50 +40,105 @@ class BaseProvider(abc.ABC):
         """
         return None
 
+    def validate_executable(self, package: InstalledPackage, command: str, candidate_path: str) -> bool:
+        """
+        Validate that candidate_path actually belongs to the selected package.
+        Prevents executing an executable belonging to a conflicting version.
+        """
+        if package.contents:
+            canonical_cand = os.path.realpath(candidate_path)
+            cand_abs = os.path.abspath(candidate_path)
+            for path in package.contents:
+                if path == cand_abs or os.path.abspath(path) == cand_abs or os.path.realpath(path) == canonical_cand:
+                    return True
+            return False
+
+        # If package.contents is empty (e.g. mock test fixture), require slot/version in path
+        base = os.path.basename(candidate_path)
+        if package.slot and package.slot != "0":
+            if package.slot in candidate_path or package.slot in base:
+                return True
+        if package.version and package.version in candidate_path:
+            return True
+
+        return False
+
     def find_executable(self, package: InstalledPackage, command: str) -> str:
         """
         Locate the absolute path to command for the given installed package.
-        Checks package contents and standard Gentoo installation layouts.
+        Guarantees that the resolved executable belongs to the selected package.
+        Never falls back to conflicting system executables in /usr/bin.
         """
-        # First check package CONTENTS for matching executables in /usr/bin or /bin
-        matching_candidate = None
-        for path in package.contents:
-            base = os.path.basename(path)
-            # Exact match, e.g. /usr/bin/go or /usr/lib/go/bin/go
-            if base == command:
-                matching_candidate = path
-                if os.path.exists(path) and os.access(path, os.X_OK):
-                    return path
-            # Versioned or slotted match, e.g. /usr/bin/fixture-tool-1 or /usr/bin/go-1.22
-            if base.startswith(f"{command}-") or base.startswith(f"{command}{package.slot}"):
-                matching_candidate = path
-                if os.path.exists(path) and os.access(path, os.X_OK):
-                    return path
+        # 1. First search package CONTENTS
+        if package.contents:
+            for path in package.contents:
+                base = os.path.basename(path)
+                # Exact command match, slotted match, or versioned match
+                is_match = (
+                    base == command
+                    or base == f"{command}-{package.slot}"
+                    or base == f"{command}{package.slot}"
+                    or base == f"{command}-{package.version}"
+                )
+                if is_match and ("/bin" in path or path.endswith(f"/{command}")):
+                    if self.validate_executable(package, command, path):
+                        if os.path.exists(path):
+                            if os.access(path, os.X_OK):
+                                return path
+                        else:
+                            # Test fixture where files might not physically exist on host
+                            return path
 
-        # If running in test environment where files might not exist physically
-        if matching_candidate:
-            return matching_candidate
-
-        # Fallback check standard installation paths if not found in CONTENTS
-        standard_locations = [
-            f"/usr/bin/{command}",
+        # 2. Check slotted/versioned installation paths
+        versioned_locations = [
+            f"/usr/lib/{package.pkg_name}/{package.slot}/bin/{command}",
+            f"/usr/lib/{package.pkg_name}-{package.slot}/bin/{command}",
             f"/usr/bin/{command}-{package.slot}",
             f"/usr/bin/{command}-{package.version}",
-            f"/usr/lib/{package.pkg_name}/{package.slot}/bin/{command}",
-            f"/usr/lib/{package.pkg_name}/bin/{command}",
-            f"/usr/lib/{package.pkg_name}-{package.slot}/bin/{command}",
         ]
-        for loc in standard_locations:
+        for loc in versioned_locations:
             if os.path.exists(loc) and os.access(loc, os.X_OK):
-                return loc
+                if self.validate_executable(package, command, loc):
+                    return loc
+
+        # 3. Check /usr/bin/{command} ONLY if validated to belong to this package
+        unversioned = f"/usr/bin/{command}"
+        if os.path.exists(unversioned) and os.access(unversioned, os.X_OK):
+            if self.validate_executable(package, command, unversioned):
+                return unversioned
 
         raise MissingExecutableError(
             tool=self.name,
             command=command,
             pkg=package.cpv,
-            expected_path=standard_locations[0]
+            expected_path=versioned_locations[0],
+            details={
+                "reason": f"no executable for command '{command}' belonging to package '{package.cpv}' could be validated",
+                "searched_paths": ", ".join(versioned_locations + [unversioned]),
+            }
         )
 
     def get_environment(self, package: InstalledPackage, executable_path: str) -> Dict[str, str]:
         """Return environment variable updates required by this toolchain."""
         return {}
+
+
+class GenericProvider(BaseProvider):
+    """Generic Portage provider for any installed package atom."""
+
+    def __init__(self, name: str, package_atom: str, commands: Optional[List[str]] = None):
+        self._name = name
+        self._package_atom = package_atom
+        self._commands = commands if commands else [name]
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def package_atom(self) -> str:
+        return self._package_atom
+
+    @property
+    def commands(self) -> List[str]:
+        return self._commands

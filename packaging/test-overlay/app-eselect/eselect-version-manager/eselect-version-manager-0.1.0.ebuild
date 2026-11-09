@@ -9,7 +9,7 @@ inherit python-single-r1
 
 DESCRIPTION="Gentoo-native project-aware toolchain version manager"
 HOMEPAGE="https://github.com/arran4/eselect-version-manager"
-SRC_URI=""
+SRC_URI="https://github.com/arran4/eselect-version-manager/archive/v${PV}.tar.gz -> ${P}.tar.gz"
 
 LICENSE="GPL-2+"
 SLOT="0"
@@ -31,14 +31,6 @@ BDEPEND="
 "
 
 S="${WORKDIR}/${P}"
-
-src_unpack() {
-	mkdir -p "${S}" || die
-	if [[ -d "/workspace/eselect_version_manager" ]]; then
-		cp -r /workspace/bin /workspace/config /workspace/docs /workspace/eselect_version_manager \
-			/workspace/modules /workspace/README.md "${S}/" || die
-	fi
-}
 
 src_install() {
 	# Install eselect module

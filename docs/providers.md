@@ -23,9 +23,11 @@ Required Runtime Environment
   - `GOTOOLCHAIN=local`: Enforces Gentoo Portage management by strictly preventing unauthorized network toolchain downloads.
   - `GOROOT`: Configured to the package's specific root directory (e.g. `/usr/lib/go/1.22`).
 - **Native Version Detection (`from-file`):**
-  - Reads `go.work` (if present) or `go.mod`.
-  - Supports `go <version>` (e.g. `go 1.22` -> `>=1.22`).
-  - Supports `toolchain <version>` (e.g. `toolchain go1.22.4` -> `>=1.22.4`).
+  - Search order: respects workspace precedence (`go.work` in current directory or any ancestor overrides module-level `go.mod`).
+  - Supports nested modules when no `go.work` is present.
+  - `go <version>`: specifies minimum required version (`>= <version>`), allowing newer installed toolchains to satisfy requirements.
+  - `toolchain <version>`: specifies preferred toolchain (`toolchain go1.22.4`); if installed, the preferred version is selected; if missing, falls back to newer installed toolchains (`>= 1.22.4`). Missing compatible toolchains fail cleanly with exit code 13.
+- **Executable Validation:** Validates that candidate binaries belong strictly to the selected package's `CONTENTS` or slot directories, preventing accidental execution of conflicting versions in `/usr/bin`.
 
 ### 2. Test Fixture Provider (`fixture`)
 - **Package Atom:** `app-misc/version-manager-fixture`
@@ -38,9 +40,31 @@ Required Runtime Environment
 - **Exposed Commands:** `unslotted-tool`
 - **Behavior:** Validates that unslotted packages (`SLOT="0"`) function seamlessly alongside slotted toolchains.
 
-## Implementing a New Provider
+## Dynamic Providers (`providers.d/`)
 
-New providers inherit from `BaseProvider`:
+Users and administrators can add support for any Portage-managed package without modifying Python source code. Simply drop a declarative `.conf` file into either:
+- System: `/etc/eselect/version-manager/providers.d/<tool>.conf` (respects `EROOT`)
+- User: `${XDG_CONFIG_HOME:-~/.config}/eselect/version-manager/providers.d/<tool>.conf`
+
+### Provider Configuration Format
+
+```bash
+# /etc/eselect/version-manager/providers.d/python.conf
+PACKAGE_ATOM="dev-lang/python"
+COMMANDS="python python3"
+```
+
+```bash
+# ~/.config/eselect/version-manager/providers.d/rust.conf
+PACKAGE_ATOM="dev-lang/rust-bin"
+COMMANDS="rustc cargo rustfmt"
+```
+
+Once defined, shims can be installed via `eselect version-manager shims install <tool>`, and version constraints managed via `set`, `get`, and `list`.
+
+## Implementing a Programmatic Provider
+
+New built-in providers inherit from `BaseProvider`:
 
 ```python
 from eselect_version_manager.providers.base import BaseProvider

@@ -144,76 +144,56 @@ class Resolver:
 
                 # Check private user-project configuration first
                 if proj["has_private_conf"]:
-                    try:
-                        priv_conf = read_private_project_config(p_root)
-                        if priv_conf and t_key in priv_conf:
-                            selected_val = priv_conf[t_key]
-                            selected_scope = Scope.USER_PROJECT if is_nearest else Scope.PARENT_PROJECT
-                            selected_source = proj["private_conf_path"]
-                            effective_project_root = p_root
-                            steps.append(ResolutionStep(
-                                selected_scope,
-                                selected_source,
-                                tool_name,
-                                selected_val,
-                                True,
-                                details=f"Project root: {p_root}"
-                            ))
-                            break
-                        else:
-                            steps.append(ResolutionStep(
-                                Scope.USER_PROJECT if is_nearest else Scope.PARENT_PROJECT,
-                                proj["private_conf_path"],
-                                tool_name,
-                                None,
-                                False,
-                                details="Tool not specified in private project config"
-                            ))
-                    except Exception as e:
+                    priv_conf = read_private_project_config(p_root)
+                    if priv_conf and t_key in priv_conf:
+                        selected_val = priv_conf[t_key]
+                        selected_scope = Scope.USER_PROJECT if is_nearest else Scope.PARENT_PROJECT
+                        selected_source = proj["private_conf_path"]
+                        effective_project_root = p_root
+                        steps.append(ResolutionStep(
+                            selected_scope,
+                            selected_source,
+                            tool_name,
+                            selected_val,
+                            True,
+                            details=f"Project root: {p_root}"
+                        ))
+                        break
+                    else:
                         steps.append(ResolutionStep(
                             Scope.USER_PROJECT if is_nearest else Scope.PARENT_PROJECT,
                             proj["private_conf_path"],
                             tool_name,
                             None,
                             False,
-                            details=f"Error reading private config: {e}"
+                            details="Tool not specified in private project config"
                         ))
 
                 # Check .eselect.conf next
                 if proj["has_file_conf"]:
-                    try:
-                        file_conf = parse_declarative_config(proj["file_conf_path"])
-                        if t_key in file_conf:
-                            selected_val = file_conf[t_key]
-                            selected_scope = Scope.PROJECT_FILE if is_nearest else Scope.PARENT_PROJECT
-                            selected_source = proj["file_conf_path"]
-                            effective_project_root = p_root
-                            steps.append(ResolutionStep(
-                                selected_scope,
-                                selected_source,
-                                tool_name,
-                                selected_val,
-                                True,
-                                details=f"Project root: {p_root}"
-                            ))
-                            break
-                        else:
-                            steps.append(ResolutionStep(
-                                Scope.PROJECT_FILE if is_nearest else Scope.PARENT_PROJECT,
-                                proj["file_conf_path"],
-                                tool_name,
-                                None,
-                                False,
-                                details="Tool not specified in .eselect.conf"
-                            ))
-                    except Exception as e:
+                    file_conf = parse_declarative_config(proj["file_conf_path"])
+                    if t_key in file_conf:
+                        selected_val = file_conf[t_key]
+                        selected_scope = Scope.PROJECT_FILE if is_nearest else Scope.PARENT_PROJECT
+                        selected_source = proj["file_conf_path"]
+                        effective_project_root = p_root
+                        steps.append(ResolutionStep(
+                            selected_scope,
+                            selected_source,
+                            tool_name,
+                            selected_val,
+                            True,
+                            details=f"Project root: {p_root}"
+                        ))
+                        break
+                    else:
                         steps.append(ResolutionStep(
                             Scope.PROJECT_FILE if is_nearest else Scope.PARENT_PROJECT,
                             proj["file_conf_path"],
                             tool_name,
                             None,
                             False,
-                            details=f"Error reading file config: {e}"
+                            details="Tool not specified in .eselect.conf"
                         ))
 
         # 3. User default: ~/.config/eselect/version-manager.conf
@@ -285,16 +265,46 @@ class Resolver:
                     exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
                     details={"tool": tool_name, "provider": provider.package_atom}
                 )
-            effective_constraint = provider.parse_native_version_file(project_root)
-            steps.append(ResolutionStep(
-                scope,
-                f"from-file ({project_root})",
-                tool_name,
-                effective_constraint,
-                True,
-                details=f"Derived from native project configuration in {project_root}"
-            ))
-            constraint_to_match = effective_constraint
+
+            installed_pkgs = get_installed_packages(provider.package_atom, eroot=self.eroot)
+            if hasattr(provider, "resolve_native_package"):
+                best_pkg, effective_desc = provider.resolve_native_package(project_root, installed_pkgs)
+                steps.append(ResolutionStep(
+                    scope,
+                    f"from-file ({project_root})",
+                    tool_name,
+                    effective_desc,
+                    True,
+                    details=f"Derived from native project configuration in {project_root}"
+                ))
+                exec_path = provider.find_executable(best_pkg, command)
+                env_vars = provider.get_environment(best_pkg, exec_path)
+                return ResolutionResult(
+                    tool=tool_name,
+                    command=command,
+                    requested_constraint=raw_value,
+                    selected_scope=scope,
+                    source_file=source_file,
+                    project_root=project_root,
+                    provider_name=provider.name,
+                    provider_atom=provider.package_atom,
+                    package=best_pkg,
+                    executable_path=exec_path,
+                    env_vars=env_vars,
+                    steps=steps,
+                    is_system_fallback=False,
+                )
+            else:
+                effective_constraint = provider.parse_native_version_file(project_root)
+                steps.append(ResolutionStep(
+                    scope,
+                    f"from-file ({project_root})",
+                    tool_name,
+                    effective_constraint,
+                    True,
+                    details=f"Derived from native project configuration in {project_root}"
+                ))
+                constraint_to_match = effective_constraint
         elif val == "system":
             # Delegate to existing Gentoo default executable
             sys_exec = find_system_executable(command)

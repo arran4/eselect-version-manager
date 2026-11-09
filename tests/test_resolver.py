@@ -13,7 +13,12 @@ from eselect_version_manager.project import (
     save_private_project_config,
 )
 from eselect_version_manager.config import update_config_file, get_system_config_path
-from eselect_version_manager.errors import NoMatchingVersionError, RecursionError
+from eselect_version_manager.errors import (
+    NoMatchingVersionError,
+    RecursionError,
+    InvalidConfigError,
+    StaleProjectRecordError,
+)
 
 
 def fake_installed_packages(atom, eroot=None):
@@ -149,3 +154,49 @@ def test_recursion_detection(monkeypatch):
     resolver = Resolver()
     with pytest.raises(RecursionError):
         resolver.resolve("go")
+
+
+def test_malformed_project_file_conf_is_fatal(tmp_path, monkeypatch):
+    """Malformed .eselect.conf in project root must be fatal, never silently fallback."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+    (proj_dir / ".eselect.conf").write_text('VM_GO="unclosed quote\n')
+
+    resolver = Resolver()
+    with pytest.raises(InvalidConfigError) as exc_info:
+        resolver.resolve("go", current_dir=str(proj_dir))
+    assert "unclosed quote" in str(exc_info.value)
+
+
+def test_malformed_parent_project_file_conf_is_fatal(tmp_path, monkeypatch):
+    """Malformed parent .eselect.conf in ancestor hierarchy must be fatal."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    (parent_dir / ".eselect.conf").write_text('VM_GO=`bad_subshell`\n')
+
+    child_dir = parent_dir / "child"
+    child_dir.mkdir()
+
+    resolver = Resolver()
+    with pytest.raises(InvalidConfigError) as exc_info:
+        resolver.resolve("go", current_dir=str(child_dir))
+    assert "command substitution is forbidden" in str(exc_info.value)
+
+
+def test_malformed_private_project_conf_is_fatal(tmp_path, monkeypatch):
+    """Malformed private project configuration must be fatal, never silently fallback."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+    canon_root = canonicalize_path(str(proj_dir))
+
+    # Save initial config then corrupt it
+    conf_path = save_private_project_config(canon_root, {"VM_GO": "1.22"})
+    with open(conf_path, "w", encoding="utf-8") as f:
+        f.write('PROJECT_ROOT="wrong_root"\nVM_GO="1.22"\n')
+
+    resolver = Resolver()
+    with pytest.raises(StaleProjectRecordError):
+        resolver.resolve("go", current_dir=str(proj_dir))

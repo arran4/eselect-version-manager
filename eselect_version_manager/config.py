@@ -49,6 +49,15 @@ def get_state_dir() -> str:
     return os.path.join(get_xdg_state_home(), "eselect", "version-manager")
 
 
+def get_system_providers_dir(eroot: Optional[str] = None) -> str:
+    root = eroot or os.environ.get("EROOT") or "/"
+    return os.path.normpath(os.path.join(root, "etc", "eselect", "version-manager", "providers.d"))
+
+
+def get_user_providers_dir() -> str:
+    return os.path.join(get_user_config_dir(), "version-manager", "providers.d")
+
+
 def get_shims_dir() -> str:
     # Per specification: $HOME/.local/bin/eselect-version-manager/shims/
     home = os.path.expanduser("~")
@@ -60,16 +69,30 @@ def get_shims_dir() -> str:
 ASSIGNMENT_RE = re.compile(r'^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)$')
 
 
+def validate_version_constraint(tool: str, constraint: str) -> None:
+    """
+    Validate that constraint is syntactically acceptable.
+    Rejects shell metacharacters, control characters, empty strings, etc.
+    """
+    from .errors import InvalidVersionConstraintError
+    c = constraint.strip()
+    if not c:
+        raise InvalidVersionConstraintError(tool, constraint, "constraint cannot be empty")
+    if any(ch in c for ch in (';', '&', '|', '`', '$', '\n', '\r', '\0', '{', '}', '(', ')')):
+        raise InvalidVersionConstraintError(tool, constraint, "forbidden characters in constraint")
+
+
 def parse_declarative_config(path: str) -> Dict[str, str]:
     """
     Parse a Gentoo-style configuration file strictly declaratively.
     Never evaluates shell code, commands or backticks.
-    Preserves comments and validates syntax.
+    Preserves comments, detects duplicate keys, and validates syntax.
     """
     if not os.path.exists(path):
         return {}
 
     values: Dict[str, str] = {}
+    seen_keys: set = set()
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -90,6 +113,14 @@ def parse_declarative_config(path: str) -> Dict[str, str]:
             )
 
         key, raw_val = m.group(1), m.group(2).strip()
+
+        if key in seen_keys:
+            raise InvalidConfigError(
+                path,
+                f"duplicate configuration key '{key}' on line {lineno}",
+                details={"line_number": lineno, "key": key}
+            )
+        seen_keys.add(key)
 
         # Check for dangerous backticks or $() command substitutions
         if "`" in raw_val or "$(" in raw_val:
@@ -112,19 +143,59 @@ def _extract_value(raw_val: str, path: str, lineno: int) -> str:
         return ""
 
     first_char = raw_val[0]
-    if first_char in ('"', "'"):
-        quote_char = first_char
-        end_idx = -1
-        escaped = False
-        for i in range(1, len(raw_val)):
-            if raw_val[i] == "\\" and quote_char == '"':
-                escaped = not escaped
-                continue
-            if raw_val[i] == quote_char and not escaped:
-                end_idx = i
+    if first_char == '"':
+        idx = 1
+        chars = []
+        closed = False
+        while idx < len(raw_val):
+            c = raw_val[idx]
+            if c == '\\':
+                if idx + 1 < len(raw_val):
+                    next_c = raw_val[idx + 1]
+                    if next_c == '"':
+                        chars.append('"')
+                        idx += 2
+                        continue
+                    elif next_c == '\\':
+                        chars.append('\\')
+                        idx += 2
+                        continue
+                    elif next_c == 'n':
+                        chars.append('\n')
+                        idx += 2
+                        continue
+                    elif next_c == 't':
+                        chars.append('\t')
+                        idx += 2
+                        continue
+                    else:
+                        chars.append('\\')
+                        chars.append(next_c)
+                        idx += 2
+                        continue
+                else:
+                    chars.append('\\')
+                    idx += 1
+                    continue
+            elif c == '"':
+                closed = True
+                idx += 1
                 break
-            escaped = False
+            else:
+                chars.append(c)
+                idx += 1
 
+        if not closed:
+            raise InvalidConfigError(path, f"unclosed quote on line {lineno}", details={"line_number": lineno})
+
+        remainder = raw_val[idx:].strip()
+        if remainder and not remainder.startswith("#"):
+            raise InvalidConfigError(path, f"trailing characters after closing quote on line {lineno}", details={"line_number": lineno})
+
+        return "".join(chars)
+
+    elif first_char == "'":
+        end_idx = raw_val.find("'", 1)
         if end_idx == -1:
             raise InvalidConfigError(path, f"unclosed quote on line {lineno}", details={"line_number": lineno})
 
@@ -133,9 +204,6 @@ def _extract_value(raw_val: str, path: str, lineno: int) -> str:
         if remainder and not remainder.startswith("#"):
             raise InvalidConfigError(path, f"trailing characters after closing quote on line {lineno}", details={"line_number": lineno})
 
-        # Process simple escape sequences if double-quoted
-        if quote_char == '"':
-            content = content.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n').replace('\\t', '\t')
         return content
 
     # Unquoted value: take until whitespace or comment
@@ -169,13 +237,31 @@ def atomic_write_file(path: str, content: str, mode: int = 0o644) -> None:
         raise
 
 
+def format_assignment(key: str, val: str) -> str:
+    """Format safe assignment escaping backslashes and quotes."""
+    escaped = val.replace('\\', '\\\\').replace('"', '\\"')
+    return f'{key}="{escaped}"\n'
+
+
 def update_config_file(path: str, updates: Dict[str, Optional[str]], header_comment: str = "") -> None:
     """
     Update or unset keys in a Gentoo-style configuration file.
     Preserves existing unrelated entries, order, and comments.
     If value is None, the key is unset (removed).
     If file doesn't exist, it is created.
+    Validates key names and rejects newline injection.
     """
+    for key, val in updates.items():
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
+            raise InvalidConfigError(path, f"invalid configuration key name '{key}'", details={"key": key})
+        if val is not None:
+            if '\n' in val or '\r' in val or '\0' in val:
+                raise InvalidConfigError(
+                    path,
+                    f"configuration value for '{key}' cannot contain newlines or control characters",
+                    details={"key": key}
+                )
+
     existing_lines: List[str] = []
     if os.path.exists(path):
         try:
@@ -195,7 +281,7 @@ def update_config_file(path: str, updates: Dict[str, Optional[str]], header_comm
                 new_val = updates[key]
                 remaining_keys.discard(key)
                 if new_val is not None:
-                    new_lines.append(f'{key}="{new_val}"\n')
+                    new_lines.append(format_assignment(key, new_val))
                 # If new_val is None, key is removed (omitted)
                 continue
         new_lines.append(line)
@@ -211,7 +297,7 @@ def update_config_file(path: str, updates: Dict[str, Optional[str]], header_comm
         for key in sorted(remaining_keys):
             val = updates[key]
             if val is not None:
-                new_lines.append(f'{key}="{val}"\n')
+                new_lines.append(format_assignment(key, val))
 
     atomic_write_file(path, "".join(new_lines))
 

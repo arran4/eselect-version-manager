@@ -1,11 +1,17 @@
 """Unit tests for user-local shims management and lifecycle."""
 
 import os
+try:
+    import pytest
+except ImportError:
+    import tests.compat as pytest
+
 from eselect_version_manager.shims import (
     ShimManager,
     is_shim_disabled,
     load_disabled_shims,
 )
+from eselect_version_manager.errors import UnknownToolError
 
 
 def test_shims_install_and_list(tmp_path, monkeypatch):
@@ -63,3 +69,15 @@ def test_shims_uninstall(tmp_path, monkeypatch):
     assert not (shims_dir / "go").exists()
     assert not (shims_dir / "gofmt").exists()
     assert len(mgr.list_shims()) == 0
+
+
+def test_shims_install_rejects_unknown_tool(tmp_path, monkeypatch):
+    """Attempting to install shims for an unsupported tool must fail explicitly."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    shims_dir = tmp_path / "shims"
+
+    mgr = ShimManager(shims_dir=str(shims_dir))
+    with pytest.raises(UnknownToolError) as exc_info:
+        mgr.install(["unsupported-tool"])
+    assert "unknown tool 'unsupported-tool'" in str(exc_info.value)
+    assert not (shims_dir / "unsupported-tool").exists()

@@ -32,19 +32,6 @@ BDEPEND="
 
 S="${WORKDIR}/${P}"
 
-src_unpack() {
-	if [[ -n "${A}" && -f "${DISTDIR}/${P}.tar.gz" ]]; then
-		default
-	elif [[ -d "/workspace/eselect_version_manager" ]]; then
-		# Local repository tree checkout
-		mkdir -p "${S}" || die
-		cp -r /workspace/bin /workspace/config /workspace/docs /workspace/eselect_version_manager \
-			/workspace/modules /workspace/README.md "${S}/" || die
-	else
-		default
-	fi
-}
-
 src_install() {
 	# Install eselect module
 	insinto /usr/share/eselect/modules

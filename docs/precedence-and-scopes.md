@@ -62,3 +62,4 @@
 An explicit version constraint that cannot be satisfied by an installed Portage package **must fail immediately**.
 - `eselect-version-manager` **never silently falls back** to another version or to the system default when an explicit constraint is present.
 - A failing resolution terminates with exit code `13` (`NO_MATCHING_VERSION`) and prints diagnostic troubleshooting suggestions.
+- **Malformed Configuration is Strictly Fatal:** If any applicable project configuration file (`.eselect.conf` or private `<project-id>.conf`) in the directory hierarchy is unreadable, malformed, contains duplicate keys, or contains invalid syntax, resolution **aborts immediately** with an error. It **never** silently ignores the corrupted configuration or falls back to an inherited or system version.

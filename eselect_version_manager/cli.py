@@ -215,8 +215,9 @@ def cmd_list(tool: Optional[str], eroot: Optional[str] = None) -> int:
     print(f"Installed versions for {provider.package_atom}:")
     for idx, p in enumerate(pkgs, 1):
         marker = "* " if p.cpv == active_cpv else "  "
+        ver_display = f"{p.version}-{p.revision}" if p.revision and p.revision != "r0" else p.version
         slot_info = f" (slot {p.slot})" if p.slot != "0" else ""
-        print(f"  [{idx}] {marker}{p.version}{slot_info}")
+        print(f"  [{idx}] {marker}{ver_display}{slot_info}")
 
     return ExitCode.SUCCESS
 
