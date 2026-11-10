@@ -2,13 +2,13 @@
 
 Per-project versions of **Portage-installed** tools, managed through an `eselect` module and user-local PATH shims. The project does not install or download toolchains.
 
-**Status:** [initial implementation PR #1](https://github.com/arran4/eselect-version-manager/pull/1) is under review. The package is not released.
+**Status:** [initial implementation PR #1](https://github.com/arran4/eselect-version-manager/pull/1) has merged. The package is not yet released.
 
 **Technical documentation:** [arran4.github.io/eselect-version-manager](https://arran4.github.io/eselect-version-manager/) (site available after GitHub Pages is enabled and the documentation workflow is deployed). The site is **generated** from the Markdown in [`docs/`](docs/) by GitHub Actions; edit the source Markdown rather than generated HTML.
 
 ## Quick start
 
-The [companion overlay](https://github.com/arran4/eselect-version-manager-overlay) contains the proposed `app-eselect/eselect-version-manager` ebuild. The current version requires a source archive built from this draft branch; do not expect a published distfile until the first release.
+The [companion overlay](https://github.com/arran4/eselect-version-manager-overlay) contains the proposed `app-eselect/eselect-version-manager` ebuild. A normal Portage installation needs a published source archive and a generated Manifest; these are prepared by the first-release workflow.
 
 After installing the module on Gentoo:
 
@@ -41,7 +41,7 @@ Private project settings override matching values in `.eselect.conf`. Unspecifie
 
 ## Docker demo
 
-The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. [Docker guide](docs/containers.md) documents local builds and the versioned GHCR demo image built after a release. The demo uses clearly labelled slotted fixture tools; it does not include mock Go compilers.
+The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. The demo preconfigures a Portage Git repository for an explicit `emaint sync -r eselect-version-manager-overlay`; CI still uses a pinned checkout. [Docker guide](docs/containers.md) documents local builds and the versioned GHCR demo image built after a release. The demo uses clearly labelled slotted fixture tools; it does not include mock Go compilers.
 
 ## Releases
 

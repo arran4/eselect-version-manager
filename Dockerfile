@@ -70,12 +70,19 @@ RUN set -eu; \
 # side-by-side fixture programs are intentionally synthetic and clearly named.
 # It does NOT install the fake dev-lang/go packages from the CI-only overlay.
 FROM installed AS demo
+# Runtime Portage repository sync is optional; CI uses a pinned overlay.
 RUN set -eu; \
     printf '[eselect-version-manager-fixtures]\nlocation = /workspace/overlay/tests/portage-overlay\npriority = 110\nauto-sync = false\n' > /etc/portage/repos.conf/eselect-version-manager-fixtures.conf; \
     printf 'app-misc/version-manager-fixture ~amd64\n' > /etc/portage/package.accept_keywords/eselect-version-manager-fixtures; \
     emerge --quiet-build=y --oneshot \
       'app-misc/version-manager-fixture:1' \
       'app-misc/version-manager-fixture:2'; \
+    if ! command -v git >/dev/null 2>&1; then \
+      emerge --quiet-build=y --oneshot dev-vcs/git; \
+    fi; \
+    rm -f /etc/portage/repos.conf/eselect-version-manager.conf; \
+    printf '[eselect-version-manager-overlay]\nlocation = /var/db/repos/eselect-version-manager-overlay\nsync-type = git\nsync-uri = https://github.com/arran4/eselect-version-manager-overlay.git\nauto-sync = yes\nmasters = gentoo\n' \
+      > /etc/portage/repos.conf/eselect-version-manager-overlay.conf; \
     useradd -m -s /bin/bash demo; \
     mkdir -p /home/demo/projects/slot-1 /home/demo/projects/slot-2; \
     printf 'VM_FIXTURE=":1"\n' > /home/demo/projects/slot-1/.eselect.conf; \

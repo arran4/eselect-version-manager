@@ -32,6 +32,36 @@ The two fixture projects use committed-style `.eselect.conf` files with `VM_FIXT
 
 The image runs as an unprivileged `demo` user. GitHub Packages visibility may need to be set to public before anonymous pulls work.
 
+## Sync the latest companion overlay (opt-in)
+
+The demo image installs the version manager from a **pinned, CI-reviewed overlay checkout**. Its interactive environment also preconfigures a separate, normal Gentoo Portage Git repository at `/var/db/repos/eselect-version-manager-overlay`, with `dev-vcs/git` available:
+
+```ini
+[eselect-version-manager-overlay]
+location = /var/db/repos/eselect-version-manager-overlay
+sync-type = git
+sync-uri = https://github.com/arran4/eselect-version-manager-overlay.git
+auto-sync = yes
+masters = gentoo
+```
+
+The live repository has no initial checkout: a manual Portage sync obtains the latest branch from GitHub. From a root shell inside the running container:
+
+```sh
+emaint sync -r eselect-version-manager-overlay
+```
+
+Or from another terminal on the host, after naming your running container:
+
+```sh
+docker exec --user root <container-name> emaint sync -r eselect-version-manager-overlay
+```
+
+The normal `demo` user is deliberately unprivileged. Syncing changes available **ebuild metadata**, not installed packages; use `emerge` deliberately to upgrade a tool. The container is disposable, so this checkout does not persist unless a volume is mounted. `auto-sync = yes` also allows the overlay to participate in explicitly run `emaint sync --auto` or `emerge --sync`.
+
+The CI and release workflows retain their pinned overlay checkout for reproducible validation; they never silently fetch a new overlay version as part of a passing test.
+
+
 ## Build locally from the current checkout
 
 The [companion overlay](https://github.com/arran4/eselect-version-manager-overlay) must be checked out into `./overlay`:
@@ -41,8 +71,6 @@ git clone https://github.com/arran4/eselect-version-manager-overlay.git overlay
 docker build --target demo --build-arg VM_SOURCE=checkout -t eselect-vm-demo .
 docker run --rm -it eselect-vm-demo
 ```
-
-Until the overlay migration PR merges, check out its `feat/seed-portage-overlay-and-fixtures` branch instead of the default branch.
 
 To execute full Gentoo integration tests locally:
 
