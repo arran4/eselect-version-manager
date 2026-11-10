@@ -50,19 +50,33 @@ fi
 mkdir -p /etc/portage
 echo 'FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox"' >> /etc/portage/make.conf
 
-# 1b. Create reproducible source archive for production ebuild testing
-echo "[Step 1b] Creating reproducible release source archive in DISTDIR..."
-mkdir -p /var/cache/distfiles
-tar -czf /var/cache/distfiles/eselect-version-manager-0.1.0.tar.gz \
-    --transform='s,^,/eselect-version-manager-0.1.0/,' \
-    -C /workspace \
-    bin config docs eselect_version_manager modules README.md
-chown -R portage:portage /var/cache/distfiles
-chmod 0644 /var/cache/distfiles/eselect-version-manager-0.1.0.tar.gz
+# 1b. For checkout CI synthesize an archive from the exact checkout. For a
+# release tag, the installed stage has already fetched the real GitHub tarball;
+# never replace that real release archive with a local checkout.
+VM_VERSION="${VM_VERSION:-0.1.0}"
+VM_SOURCE="${VM_SOURCE:-checkout}"
+pkg="/workspace/overlay/app-eselect/eselect-version-manager/eselect-version-manager-${VM_VERSION}.ebuild"
+test -f "${pkg}"
 
-echo "Generating Manifest for eselect-version-manager from genuine tarball..."
-rm -f /workspace/overlay/app-eselect/eselect-version-manager/Manifest
-ebuild --force /workspace/overlay/app-eselect/eselect-version-manager/eselect-version-manager-0.1.0.ebuild manifest
+if [[ "${VM_SOURCE}" == checkout ]]; then
+    echo "[Step 1b] Creating checkout source archive in DISTDIR..."
+    mkdir -p /var/cache/distfiles
+    tar -czf "/var/cache/distfiles/eselect-version-manager-${VM_VERSION}.tar.gz" \
+        --transform="s,^,eselect-version-manager-${VM_VERSION}/," \
+        -C /workspace \
+        bin config docs eselect_version_manager modules README.md
+    chown -R portage:portage /var/cache/distfiles
+    chmod 0644 "/var/cache/distfiles/eselect-version-manager-${VM_VERSION}.tar.gz"
+elif [[ "${VM_SOURCE}" == release ]]; then
+    echo "[Step 1b] Retaining verified tagged source archive and installed ebuild..."
+    test -s "/var/cache/distfiles/eselect-version-manager-${VM_VERSION}.tar.gz"
+else
+    echo "Unsupported VM_SOURCE: ${VM_SOURCE}" >&2
+    exit 2
+fi
+
+echo "Verifying Manifest for eselect-version-manager version ${VM_VERSION}..."
+ebuild --force "${pkg}" manifest
 
 # 2. Emerge packages from overlay
 echo "[Step 2] Emerging eselect-version-manager and fixture packages from genuine source archive..."
@@ -75,7 +89,7 @@ emerge --verbose --quiet-build=y \
     dev-lang/go:1.23
 
 echo "Verifying packages in /var/db/pkg..."
-test -d /var/db/pkg/app-eselect/eselect-version-manager-0.1.0
+test -d /var/db/pkg/app-eselect/eselect-version-manager-${VM_VERSION}
 test -d /var/db/pkg/app-misc/version-manager-fixture-1.0
 test -d /var/db/pkg/app-misc/version-manager-fixture-2.0
 test -d /var/db/pkg/app-misc/unslotted-fixture-1.0
@@ -513,7 +527,7 @@ emerge --unmerge --quiet \
     app-eselect/eselect-version-manager
 
 test ! -f /usr/share/eselect/modules/version-manager.eselect
-test ! -d /var/db/pkg/app-eselect/eselect-version-manager-0.1.0
+test ! -d /var/db/pkg/app-eselect/eselect-version-manager-${VM_VERSION}
 echo "✓ Clean unmerge verified!"
 
 echo "================================================================="
