@@ -1,0 +1,17 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""Dispatcher entrypoint for eselect-version-manager."""
+
+import os
+import sys
+
+# Add parent directory to sys.path so it works both in-tree and when installed
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from eselect_version_manager.cli import main
+
+if __name__ == "__main__":
+    sys.exit(main())

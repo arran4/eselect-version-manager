@@ -1,0 +1,202 @@
+# -*-eselect-*-  vim: ft=eselect
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU GPL version 2 or later
+
+DESCRIPTION="Manage per-project and user toolchain versions"
+MAINTAINER="arran4"
+VERSION="0.1.0"
+
+# Find the installed or development backend dispatcher executable
+get_dispatcher() {
+	local dispatcher="${ESELECT_VM_DISPATCHER:-${EROOT%/}/usr/libexec/eselect-version-manager/dispatcher}"
+	if [[ -x "${dispatcher}" ]]; then
+		echo "${dispatcher}"
+		return 0
+	fi
+
+	# Fallback to PATH search
+	if command -v eselect-version-manager >/dev/null 2>&1; then
+		command -v eselect-version-manager
+		return 0
+	elif command -v dispatcher >/dev/null 2>&1; then
+		command -v dispatcher
+		return 0
+	fi
+
+	die -q "Dispatcher not found at ${dispatcher}"
+}
+
+# --- Action: list ---
+describe_list() {
+	echo "List available toolchains or installed versions of a specific tool"
+}
+
+describe_list_parameters() {
+	echo "[<tool>]"
+}
+
+do_list() {
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" list "$@"
+}
+
+# --- Action: show ---
+describe_show() {
+	echo "Show active version for a tool in the current directory"
+}
+
+describe_show_parameters() {
+	echo "[<tool>]"
+}
+
+do_show() {
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" show "$@"
+}
+
+# --- Action: resolve ---
+describe_resolve() {
+	echo "Show detailed resolution decision chain and target package"
+}
+
+describe_resolve_parameters() {
+	echo "<tool>"
+}
+
+do_resolve() {
+	[[ -z "$1" ]] && die -q "Please specify a tool to resolve (e.g. go)"
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" resolve "$@"
+}
+
+# --- Action: set ---
+describe_set() {
+	echo "Set version constraint for a toolchain"
+}
+
+describe_set_parameters() {
+	echo "[--user|--system|--project|--file|--user-project] [--force] <tool> <version>"
+}
+
+describe_set_options() {
+	echo "--user : Store in ~/.config/eselect/version-manager.conf"
+	echo "--system : Store in /etc/eselect/version-manager.conf (requires privileges)"
+	echo "--project : Store private user-project selection (default)"
+	echo "--file : Write to repository .eselect.conf (converts private settings)"
+	echo "--user-project : Store private user-project selection explicitly"
+	echo "--force : Overwrite conflicting settings on conversion"
+}
+
+do_set() {
+	[[ -z "$1" ]] && die -q "Usage: eselect version-manager set [options] <tool> <version>"
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" set "$@"
+}
+
+# --- Action: unset ---
+describe_unset() {
+	echo "Remove version constraint for a toolchain"
+}
+
+describe_unset_parameters() {
+	echo "[--user|--system|--project|--file|--user-project] <tool>"
+}
+
+do_unset() {
+	[[ -z "$1" ]] && die -q "Usage: eselect version-manager unset [options] <tool>"
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" unset "$@"
+}
+
+# --- Action: convert ---
+describe_convert() {
+	echo "Convert project configuration between private user storage and .eselect.conf"
+}
+
+describe_convert_parameters() {
+	echo "<--to-file|--to-user> [--force] [<path>]"
+}
+
+describe_convert_options() {
+	echo "--to-file : Migrate private project selections to checked-in .eselect.conf"
+	echo "--to-user : Migrate checked-in .eselect.conf selections to private user storage"
+	echo "--force : Force overwrite when destination has conflicting values"
+}
+
+do_convert() {
+	[[ -z "$1" ]] && die -q "Usage: eselect version-manager convert <--to-file|--to-user> [--force] [<path>]"
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" convert "$@"
+}
+
+# --- Action: rebind ---
+describe_rebind() {
+	echo "Rebind private project configuration after moving project directory"
+}
+
+describe_rebind_parameters() {
+	echo "<old-path> [<new-path>]"
+}
+
+do_rebind() {
+	[[ -z "$1" ]] && die -q "Usage: eselect version-manager rebind <old-path> [<new-path>]"
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" rebind "$@"
+}
+
+# --- Action: shims ---
+describe_shims() {
+	echo "Manage user-local executable shims in ~/.local/bin/eselect-version-manager/shims/"
+}
+
+describe_shims_parameters() {
+	echo "<install|enable|disable|uninstall|list|env> [<tool>...]"
+}
+
+describe_shims_options() {
+	echo "install : Install executable shims for tools"
+	echo "enable : Enable installed shims"
+	echo "disable : Disable shims (preserves files and tool selections, bypasses dispatch)"
+	echo "uninstall : Remove shim files"
+	echo "list : List installed shims and their status"
+	echo "env : Display PATH activation snippet"
+}
+
+do_shims() {
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" shims "$@"
+}
+
+# --- Action: exec ---
+describe_exec() {
+	echo "Execute a command with toolchain environment applied"
+}
+
+describe_exec_parameters() {
+	echo "[--tool <tool=version>] -- <command> [<args>...]"
+}
+
+do_exec() {
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" exec "$@"
+}
+
+# --- Action: doctor ---
+describe_doctor() {
+	echo "Run diagnostic checks on installation, PATH, permissions, and projects"
+}
+
+do_doctor() {
+	local disp
+	disp=$(get_dispatcher) || die -q "Dispatcher unavailable"
+	"${disp}" --eroot "${EROOT:-/}" doctor "$@"
+}

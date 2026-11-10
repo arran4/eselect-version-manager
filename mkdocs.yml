@@ -1,0 +1,23 @@
+site_name: eselect version-manager
+site_description: Gentoo project-aware toolchain selection with eselect and Portage
+site_url: https://arran4.github.io/eselect-version-manager/
+repo_url: https://github.com/arran4/eselect-version-manager
+repo_name: arran4/eselect-version-manager
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: readthedocs
+
+nav:
+  - Overview: index.md
+  - Usage:
+      - Selection and scopes: precedence-and-scopes.md
+      - User-local shims: shims.md
+      - Project file conversion: conversion.md
+      - Providers and toolchains: providers.md
+  - Docker images and CI: containers.md
+  - Internals:
+      - Architecture: architecture.md
+      - Project lookup: project-lookup.md
