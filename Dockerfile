@@ -74,6 +74,14 @@ RUN set -eu; \
     emerge --quiet-build=y --oneshot \
       'app-misc/version-manager-fixture:1' \
       'app-misc/version-manager-fixture:2'; \
+    # The build uses a pinned overlay snapshot; only interactive demos have
+    # the Portage-native Git sync configuration for opt-in updates.
+    if ! command -v git >/dev/null 2>&1; then \
+      emerge --quiet-build=y --oneshot dev-vcs/git; \
+    fi; \
+    rm -f /etc/portage/repos.conf/eselect-version-manager.conf; \
+    printf '[eselect-version-manager-overlay]\\nlocation = /var/db/repos/eselect-version-manager-overlay\\nsync-type = git\\nsync-uri = https://github.com/arran4/eselect-version-manager-overlay.git\\nauto-sync = yes\\nmasters = gentoo\\n' \
+      > /etc/portage/repos.conf/eselect-version-manager-overlay.conf; \
     useradd -m -s /bin/bash demo; \
     mkdir -p /home/demo/projects/slot-1 /home/demo/projects/slot-2; \
     printf 'VM_FIXTURE=":1"\n' > /home/demo/projects/slot-1/.eselect.conf; \

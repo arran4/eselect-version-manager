@@ -41,7 +41,7 @@ Private project settings override matching values in `.eselect.conf`. Unspecifie
 
 ## Docker demo
 
-The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. [Docker guide](docs/containers.md) documents local builds and the versioned GHCR demo image built after a release. The demo uses clearly labelled slotted fixture tools; it does not include mock Go compilers.
+The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. The demo has a normal Gentoo Git repository configuration; an administrator can explicitly fetch the latest companion overlay with `emaint sync -r eselect-version-manager-overlay`. [Docker guide](docs/containers.md) documents local builds and the versioned GHCR demo image built after a release. The demo uses clearly labelled slotted fixture tools; it does not include mock Go compilers.
 
 ## Documentation and development
 

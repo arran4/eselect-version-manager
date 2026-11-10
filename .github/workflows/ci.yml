@@ -115,3 +115,12 @@ jobs:
           docker run --rm --workdir /home/demo/projects/slot-2 eselect-version-manager:ci-demo fixture-tool | grep -F 'version 2.0 (slot 2)'
           docker run --rm eselect-version-manager:ci-demo python3 --version
           test "$(docker run --rm eselect-version-manager:ci-demo id -un)" = demo
+          docker run --rm --user root eselect-version-manager:ci-demo sh -c '
+            set -eu
+            command -v git
+            test -f /etc/portage/repos.conf/eselect-version-manager-overlay.conf
+            grep -Fq "sync-type = git" /etc/portage/repos.conf/eselect-version-manager-overlay.conf
+            grep -Fq "auto-sync = yes" /etc/portage/repos.conf/eselect-version-manager-overlay.conf
+            grep -Fq "sync-uri = https://github.com/arran4/eselect-version-manager-overlay.git" /etc/portage/repos.conf/eselect-version-manager-overlay.conf
+            test ! -e /var/db/repos/eselect-version-manager-overlay
+          '
