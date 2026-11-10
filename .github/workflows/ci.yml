@@ -124,3 +124,29 @@ jobs:
             grep -Fq "sync-uri = https://github.com/arran4/eselect-version-manager-overlay.git" /etc/portage/repos.conf/eselect-version-manager-overlay.conf
             test ! -e /var/db/repos/eselect-version-manager-overlay
           '
+
+      - name: Exercise Portage Git overlay sync and subsequent update
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --user root eselect-version-manager:ci-demo bash -c '
+            set -euo pipefail
+            source_dir=/tmp/eselect-overlay-source
+            installed_dir=/var/db/repos/eselect-version-manager-overlay
+            conf=/etc/portage/repos.conf/eselect-version-manager-overlay.conf
+            mkdir -p "${source_dir}/profiles" "${source_dir}/metadata"
+            cp /workspace/overlay/profiles/repo_name "${source_dir}/profiles/repo_name"
+            cp /workspace/overlay/metadata/layout.conf "${source_dir}/metadata/layout.conf"
+            printf "first revision\n" > "${source_dir}/README.md"
+            git -C "${source_dir}" init -q -b main
+            git -C "${source_dir}" -c user.email=test@example.com -c user.name="Gentoo CI" add .
+            git -C "${source_dir}" -c user.email=test@example.com -c user.name="Gentoo CI" commit -qm initial
+            sed -i "s#^sync-uri = .*#sync-uri = file://${source_dir}#" "${conf}"
+            emaint sync -r eselect-version-manager-overlay
+            grep -Fxq "first revision" "${installed_dir}/README.md"
+            printf "second revision\n" > "${source_dir}/README.md"
+            git -C "${source_dir}" -c user.email=test@example.com -c user.name="Gentoo CI" add README.md
+            git -C "${source_dir}" -c user.email=test@example.com -c user.name="Gentoo CI" commit -qm update
+            emaint sync -r eselect-version-manager-overlay
+            grep -Fxq "second revision" "${installed_dir}/README.md"
+          '
