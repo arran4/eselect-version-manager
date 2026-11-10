@@ -12,22 +12,42 @@ def find_go_native_file(start_dir: str) -> Tuple[str, str]:
     """
     Find applicable Go native configuration file with workspace precedence.
     Ascends from start_dir checking for go.work, then go.mod.
+    Honours GOWORK environment variable:
+      - 'off': workspace mode disabled, ignore go.work and search for go.mod
+      - custom path: use specified go.work file if it exists
+      - unset/empty/auto: search upwards from start_dir for go.work, then go.mod
     Returns (file_type, file_path) where file_type is 'go.work' or 'go.mod'.
     """
     canonical_start = os.path.realpath(os.path.abspath(start_dir))
+    gowork_env = os.environ.get("GOWORK", "").strip()
 
-    # 1. Search upwards for go.work (workspace mode has highest precedence)
-    curr = canonical_start
-    visited = set()
-    while curr and curr not in visited:
-        visited.add(curr)
-        gowork = os.path.join(curr, "go.work")
-        if os.path.isfile(gowork):
-            return ("go.work", gowork)
-        parent = os.path.dirname(curr)
-        if parent == curr:
-            break
-        curr = parent
+    # 1. Search for go.work unless GOWORK=off
+    if gowork_env == "off":
+        pass  # Workspace mode disabled
+    elif gowork_env and gowork_env != "auto":
+        gowork_path = os.path.realpath(
+            gowork_env if os.path.isabs(gowork_env) else os.path.join(canonical_start, gowork_env)
+        )
+        if os.path.isfile(gowork_path):
+            return ("go.work", gowork_path)
+        raise VersionManagerError(
+            f"GOWORK is set to '{gowork_env}' but file '{gowork_path}' does not exist",
+            exit_code=ExitCode.UNSUPPORTED_VERSION_FILE,
+            details={"GOWORK": gowork_env, "resolved_path": gowork_path}
+        )
+    else:
+        # Search upwards for go.work (workspace mode has highest precedence)
+        curr = canonical_start
+        visited = set()
+        while curr and curr not in visited:
+            visited.add(curr)
+            gowork = os.path.join(curr, "go.work")
+            if os.path.isfile(gowork):
+                return ("go.work", gowork)
+            parent = os.path.dirname(curr)
+            if parent == curr:
+                break
+            curr = parent
 
     # 2. Search upwards for go.mod (nearest module)
     curr = canonical_start
@@ -148,6 +168,24 @@ class GoProvider(BaseProvider):
             if range_matches:
                 return (range_matches[-1], f">={toolchain_ver} ({file_type})")
 
+            # In Go semantics with GOTOOLCHAIN=local, the selected toolchain must satisfy >= toolchain_ver.
+            # If no installed toolchain meets toolchain_ver, resolution must fail even if go_ver minimum is met.
+            installed_strs = [f"{p.version} (slot {p.slot})" for p in installed_packages]
+            from ..errors import NoMatchingVersionError
+            raise NoMatchingVersionError(
+                tool=self.name,
+                requested=f"toolchain {toolchain_ver} (go {go_ver}) from {target_file}",
+                provider=self.package_atom,
+                installed=installed_strs,
+                details={
+                    "source": target_file,
+                    "reason": (
+                        f"no installed {self.package_atom} package satisfies preferred toolchain '{toolchain_ver}' "
+                        f"or newer (required by 'toolchain' directive in {target_file}, despite installed packages satisfying 'go {go_ver}')"
+                    )
+                }
+            )
+
         # 2. 'go' directive represents minimum required version
         if go_ver:
             matches = match_packages(installed_packages, self.package_atom, f">={go_ver}")
@@ -170,17 +208,7 @@ class GoProvider(BaseProvider):
         )
 
     def validate_executable(self, package: InstalledPackage, command: str, candidate_path: str) -> bool:
-        if super().validate_executable(package, command, candidate_path):
-            return True
-
-        if package.slot and f"go-{package.slot}" in candidate_path:
-            return True
-        if package.slot and f"go/{package.slot}" in candidate_path:
-            return True
-        if package.version and package.version in candidate_path:
-            return True
-
-        return False
+        return super().validate_executable(package, command, candidate_path)
 
     def get_environment(self, package: InstalledPackage, executable_path: str) -> Dict[str, str]:
         env = {

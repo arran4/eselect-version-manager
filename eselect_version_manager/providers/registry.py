@@ -1,7 +1,7 @@
 """Provider registry for eselect-version-manager."""
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from .base import BaseProvider, GenericProvider
 from .go import GoProvider
 from .fixture import FixtureProvider
@@ -11,7 +11,7 @@ from ..config import (
     get_user_providers_dir,
     parse_declarative_config,
 )
-from ..errors import UnknownToolError
+from ..errors import UnknownToolError, InvalidConfigError
 
 
 class ProviderRegistry:
@@ -20,34 +20,58 @@ class ProviderRegistry:
     def __init__(self):
         self._providers: Dict[str, BaseProvider] = {}
         self._command_map: Dict[str, str] = {}  # command_name -> tool_name
+        self._builtin_tools: Set[str] = set()
 
-    def register(self, provider: BaseProvider) -> None:
+    def register(self, provider: BaseProvider, is_builtin: bool = False) -> None:
+        if is_builtin:
+            self._builtin_tools.add(provider.name)
+        old_provider = self._providers.get(provider.name)
+        if old_provider:
+            for old_cmd in old_provider.commands:
+                if self._command_map.get(old_cmd) == provider.name:
+                    del self._command_map[old_cmd]
         self._providers[provider.name] = provider
         for cmd in provider.commands:
             self._command_map[cmd] = provider.name
 
-    def load_providers_from_directory(self, dir_path: str) -> None:
+    def load_providers_from_directory(self, dir_path: str, is_user: bool = False) -> None:
         """Load external provider definition files (*.conf) from a directory."""
         if not os.path.isdir(dir_path):
             return
         try:
-            for entry in sorted(os.listdir(dir_path)):
-                if not entry.endswith(".conf"):
-                    continue
-                conf_path = os.path.join(dir_path, entry)
-                tool_name = entry[:-5]
-                try:
-                    cfg = parse_declarative_config(conf_path)
-                    pkg_atom = cfg.get("PACKAGE_ATOM")
-                    if not pkg_atom:
-                        continue
-                    cmds_raw = cfg.get("COMMANDS", "")
-                    cmds = cmds_raw.split() if cmds_raw else [tool_name]
-                    self.register(GenericProvider(name=tool_name, package_atom=pkg_atom, commands=cmds))
-                except Exception:
-                    pass
-        except OSError:
-            pass
+            entries = sorted(os.listdir(dir_path))
+        except OSError as e:
+            raise InvalidConfigError(dir_path, f"failed to read provider directory: {e}")
+
+        for entry in entries:
+            if not entry.endswith(".conf"):
+                continue
+            conf_path = os.path.join(dir_path, entry)
+            tool_name = entry[:-5]
+
+            cfg = parse_declarative_config(conf_path)
+            pkg_atom = cfg.get("PACKAGE_ATOM")
+            if not pkg_atom:
+                raise InvalidConfigError(
+                    conf_path,
+                    f"missing required variable 'PACKAGE_ATOM' in provider configuration '{conf_path}'",
+                    details={"file": conf_path, "tool": tool_name}
+                )
+
+            # Check if attempting to override a built-in provider
+            if tool_name in self._builtin_tools:
+                override_intent = cfg.get("OVERRIDE_BUILTIN", "").strip().lower()
+                if override_intent != "true":
+                    raise InvalidConfigError(
+                        conf_path,
+                        f"provider '{tool_name}' in '{conf_path}' attempts to override built-in provider '{tool_name}'; "
+                        f"set OVERRIDE_BUILTIN=\"true\" in provider config to allow intentional override",
+                        details={"file": conf_path, "tool": tool_name}
+                    )
+
+            cmds_raw = cfg.get("COMMANDS", "")
+            cmds = cmds_raw.split() if cmds_raw else [tool_name]
+            self.register(GenericProvider(name=tool_name, package_atom=pkg_atom, commands=cmds))
 
     def get_provider(self, tool_or_command: str) -> BaseProvider:
         # Check by tool name first
@@ -85,13 +109,13 @@ class ProviderRegistry:
 
 def create_default_registry(eroot: Optional[str] = None) -> ProviderRegistry:
     registry = ProviderRegistry()
-    registry.register(GoProvider())
-    registry.register(FixtureProvider())
-    registry.register(UnslottedFixtureProvider())
+    registry.register(GoProvider(), is_builtin=True)
+    registry.register(FixtureProvider(), is_builtin=True)
+    registry.register(UnslottedFixtureProvider(), is_builtin=True)
 
-    # Load dynamic providers from system and user directories
-    registry.load_providers_from_directory(get_system_providers_dir(eroot))
-    registry.load_providers_from_directory(get_user_providers_dir())
+    # Load dynamic providers from system and user directories (user takes precedence)
+    registry.load_providers_from_directory(get_system_providers_dir(eroot), is_user=False)
+    registry.load_providers_from_directory(get_user_providers_dir(), is_user=True)
 
     return registry
 

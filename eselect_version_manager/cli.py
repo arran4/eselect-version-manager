@@ -10,6 +10,7 @@ from .config import (
     get_user_config_path,
     parse_declarative_config,
     update_config_file,
+    validate_version_constraint,
     tool_key,
     tool_from_key,
 )
@@ -277,7 +278,8 @@ def cmd_resolve(tool: str, eroot: Optional[str] = None) -> int:
 
 def cmd_set(parsed) -> int:
     tool = parsed.tool.lower()
-    version = parsed.version
+    version = parsed.version.strip()
+    validate_version_constraint(tool, version)
     cwd = canonicalize_path(os.getcwd())
     key = tool_key(tool)
 

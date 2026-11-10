@@ -54,8 +54,12 @@ def save_disabled_shims(disabled: set) -> None:
     state_file = get_disabled_shims_file()
     try:
         atomic_write_file(state_file, json.dumps({"disabled": sorted(list(disabled))}, indent=2))
-    except Exception:
-        pass
+    except Exception as e:
+        raise VersionManagerError(
+            f"failed to save shim state to '{state_file}': {e}",
+            exit_code=ExitCode.GENERAL_ERROR,
+            details={"state_file": state_file, "error": str(e)}
+        )
 
 
 def is_shim_disabled(tool_or_command: str) -> bool:

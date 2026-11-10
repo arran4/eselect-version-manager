@@ -113,6 +113,16 @@ class TempPath:
     def symlink_to(self, target):
         os.symlink(str(target), self._path)
 
+    def chmod(self, mode):
+        os.chmod(self._path, mode)
+
+    def unlink(self, missing_ok=False):
+        try:
+            os.remove(self._path)
+        except FileNotFoundError:
+            if not missing_ok:
+                raise
+
 
 @contextmanager
 def temporary_directory():

@@ -84,15 +84,37 @@ LIST_BEFORE=$(eselect version-manager list fixture)
 assert_contains "1.0 (slot 1)" "${LIST_BEFORE}"
 assert_contains "2.0 (slot 2)" "${LIST_BEFORE}"
 
-# Add revision fixture-2.0-r1 inside /var/db/pkg/app-misc
+# 1. Manual VDB revision test (mtime of /var/db/pkg alone is not relied upon)
 cp -a /var/db/pkg/app-misc/version-manager-fixture-2.0 /var/db/pkg/app-misc/version-manager-fixture-2.0-r1
-# Touch /var/db/pkg to old date to verify mtime of /var/db/pkg alone is not relied upon
 touch -d "2020-01-01" /var/db/pkg
 
 LIST_AFTER=$(eselect version-manager list fixture)
 assert_contains "2.0-r1" "${LIST_AFTER}"
 echo "✓ Cache immediately invalidated on package revision in existing category!"
 rm -rf /var/db/pkg/app-misc/version-manager-fixture-2.0-r1
+
+# 2. Genuine Portage emerge and unmerge cache invalidation
+echo "Testing genuine Portage emerge & unmerge cache invalidation..."
+cp /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild \
+   /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
+ebuild --force /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild manifest
+emerge --oneshot --quiet-build=y =app-misc/version-manager-fixture-2.0-r1
+LIST_EMERGE=$(eselect version-manager list fixture)
+assert_contains "2.0-r1" "${LIST_EMERGE}"
+echo "✓ Genuine emerge package immediately visible in version list!"
+
+emerge --unmerge --quiet =app-misc/version-manager-fixture-2.0-r1
+LIST_UNMERGE=$(eselect version-manager list fixture)
+if echo "${LIST_UNMERGE}" | grep -F "2.0-r1" >/dev/null; then
+    echo "ASSERTION FAILED: unmerged 2.0-r1 still present in list!" >&2
+    exit 1
+fi
+echo "✓ Genuine unmerge package immediately removed from version list!"
+rm -f /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
+ebuild --force /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild manifest
+
+# Re-emerge fixture slot 2 for subsequent tests
+emerge --oneshot --quiet-build=y app-misc/version-manager-fixture:2
 
 # 3. Verify eselect module discovery
 echo "[Step 3] Verifying eselect module discovery..."
@@ -113,6 +135,29 @@ LIST_FIX=$(eselect version-manager list fixture)
 assert_contains "1.0 (slot 1)" "${LIST_FIX}"
 assert_contains "2.0 (slot 2)" "${LIST_FIX}"
 echo "✓ Root CLI commands functioning!"
+
+# 4b. Test malformed providers.d configuration and built-in protection
+echo "[Step 4b] Testing malformed dynamic provider definition handling..."
+mkdir -p /etc/eselect/version-manager/providers.d
+echo "INVALID SYNTAX" > /etc/eselect/version-manager/providers.d/broken.conf
+set +e
+DYN_ERR=$(eselect version-manager list 2>&1)
+DYN_CODE=$?
+set -e
+test "${DYN_CODE}" -ne 0
+assert_contains "broken.conf" "${DYN_ERR}"
+rm -f /etc/eselect/version-manager/providers.d/broken.conf
+
+# Accidental override of built-in is blocked
+echo 'PACKAGE_ATOM="dev-lang/go-bin"' > /etc/eselect/version-manager/providers.d/go.conf
+set +e
+GO_OVR_ERR=$(eselect version-manager list 2>&1)
+GO_OVR_CODE=$?
+set -e
+test "${GO_OVR_CODE}" -ne 0
+assert_contains "attempts to override built-in provider 'go'" "${GO_OVR_ERR}"
+rm -f /etc/eselect/version-manager/providers.d/go.conf
+echo "✓ Dynamic provider syntax and override protection verified!"
 
 # 5. Non-root user setup
 echo "[Step 5] Setting up unprivileged testuser..."
@@ -323,6 +368,60 @@ test "${MISS_CODE}" -eq 13
 assert_contains "no installed version satisfies the requested constraint" "${MISS_OUT}"
 echo "✓ Missing compatible toolchain fails cleanly!"
 
+# 12e. Nested module resolution with root .eselect.conf
+echo "[Step 12e] Testing nested module resolution with root .eselect.conf..."
+mkdir -p "${HOME}/projects/nested_repo/submodule"
+cd "${HOME}/projects/nested_repo"
+echo 'VM_GO="from-file"' > .eselect.conf
+cd "${HOME}/projects/nested_repo/submodule"
+cat << 'EOF' > go.mod
+module example.com/nested
+go 1.20
+toolchain go1.22.4
+EOF
+NESTED_GO=$(go version)
+assert_contains "go1.22.4" "${NESTED_GO}"
+echo "✓ Nested module resolves from root .eselect.conf!"
+
+# 12f. GOWORK=off behaviour ignoring go.work
+echo "[Step 12f] Testing GOWORK=off behaviour..."
+mkdir -p "${HOME}/projects/gowork_test/sub"
+cd "${HOME}/projects/gowork_test"
+cat << 'EOF' > go.work
+go 1.22
+toolchain go1.22.4
+EOF
+cd "${HOME}/projects/gowork_test/sub"
+cat << 'EOF' > go.mod
+module example.com/sub
+go 1.20
+EOF
+eselect version-manager set --project go from-file
+OUT_WS=$(go version)
+assert_contains "go1.22.4" "${OUT_WS}"
+OUT_NOWS=$(GOWORK=off go version)
+assert_contains "go1.23.1" "${OUT_NOWS}"
+echo "✓ GOWORK=off behaviour verified!"
+
+# 12g. Toolchain preference unsatisfied fails even if go minimum is met
+echo "[Step 12g] Testing unsatisfied toolchain preference failure..."
+mkdir -p "${HOME}/projects/tc_fail"
+cd "${HOME}/projects/tc_fail"
+cat << 'EOF' > go.mod
+module example.com/tcfail
+go 1.20
+toolchain go1.99.0
+EOF
+eselect version-manager set --project go from-file
+set +e
+TC_ERR=$(go 2>&1)
+TC_CODE=$?
+set -e
+test "${TC_CODE}" -eq 13
+assert_contains "1.99.0" "${TC_ERR}"
+assert_contains "toolchain" "${TC_ERR}"
+echo "✓ Unsatisfied toolchain preference fails cleanly!"
+
 # 13. Failure diagnostics on unsatisfiable constraint
 echo "[Step 13] Testing failure diagnostics..."
 mkdir -p "${HOME}/projects/fail_project"
@@ -353,6 +452,19 @@ eselect version-manager set --user go '>=1.22 <1.24'
 CONF_CONTENT=$(cat "${XDG_CONFIG_HOME}/eselect/version-manager.conf")
 assert_contains 'VM_GO=">=1.22 <1.24"' "${CONF_CONTENT}"
 echo "✓ Configuration value escaping verified!"
+
+# 13d. Constraint validation rejects invalid requests before writing files
+echo "[Step 13d] Testing invalid constraint rejection..."
+mkdir -p "${HOME}/projects/bad_constraint_project"
+cd "${HOME}/projects/bad_constraint_project"
+set +e
+INV_OUT=$(eselect version-manager set --file go ">>invalid" 2>&1)
+INV_CODE=$?
+set -e
+test "${INV_CODE}" -ne 0
+assert_contains "invalid version constraint" "${INV_OUT}"
+test ! -f .eselect.conf
+echo "✓ Invalid constraint rejected before modifying configuration files!"
 
 # 14. Shim lifecycle: disable, enable, uninstall
 echo "[Step 14] Testing shim lifecycle..."

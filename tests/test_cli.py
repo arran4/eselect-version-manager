@@ -30,6 +30,12 @@ def test_cli_set_and_unset_scopes(tmp_path, monkeypatch):
 
     canon_root = canonicalize_path(str(proj_dir))
 
+    # 0. Rejection of invalid constraint before modifying any files
+    rc_bad = main(["set", "go", ">>invalid"])
+    assert rc_bad != ExitCode.SUCCESS
+    assert not os.path.exists(get_project_file_path(canon_root))
+    assert read_private_project_config(canon_root) is None
+
     # 1. Set private project selection (default for 'set')
     rc = main(["set", "go", "1.26"])
     assert rc == ExitCode.SUCCESS

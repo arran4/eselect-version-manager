@@ -24,10 +24,14 @@ Required Runtime Environment
   - `GOROOT`: Configured to the package's specific root directory (e.g. `/usr/lib/go/1.22`).
 - **Native Version Detection (`from-file`):**
   - Search order: respects workspace precedence (`go.work` in current directory or any ancestor overrides module-level `go.mod`).
-  - Supports nested modules when no `go.work` is present.
+  - Supports nested modules when no `go.work` is active, resolving `go.mod` relative to the actual invocation working directory rather than only repository root.
+  - Honours `GOWORK` environment variable:
+    - `GOWORK="off"`: disables workspace mode entirely and inspects `go.mod`.
+    - `GOWORK="/path/to/go.work"`: targets the designated workspace file explicitly.
+    - unset or `auto`: searches upwards from the working directory for `go.work`, then `go.mod`.
   - `go <version>`: specifies minimum required version (`>= <version>`), allowing newer installed toolchains to satisfy requirements.
-  - `toolchain <version>`: specifies preferred toolchain (`toolchain go1.22.4`); if installed, the preferred version is selected; if missing, falls back to newer installed toolchains (`>= 1.22.4`). Missing compatible toolchains fail cleanly with exit code 13.
-- **Executable Validation:** Validates that candidate binaries belong strictly to the selected package's `CONTENTS` or slot directories, preventing accidental execution of conflicting versions in `/usr/bin`.
+  - `toolchain <version>`: specifies preferred toolchain (e.g. `toolchain go1.22.4`). If installed, the preferred version is selected; if missing, newer installed toolchains (`>= 1.22.4`) satisfy it. If no installed toolchain satisfies `>= toolchain_ver`, resolution fails with an error even if an older installed package meets the `go` minimum line, ensuring strict compliance with Go's `GOTOOLCHAIN=local` specification.
+- **Executable Validation:** Validates that candidate binaries belong strictly to the selected package's Portage `CONTENTS` metadata. Substring path heuristics are strictly rejected, and missing or non-executable binaries are never returned.
 
 ### 2. Test Fixture Provider (`fixture`)
 - **Package Atom:** `app-misc/version-manager-fixture`
@@ -45,6 +49,11 @@ Required Runtime Environment
 Users and administrators can add support for any Portage-managed package without modifying Python source code. Simply drop a declarative `.conf` file into either:
 - System: `/etc/eselect/version-manager/providers.d/<tool>.conf` (respects `EROOT`)
 - User: `${XDG_CONFIG_HOME:-~/.config}/eselect/version-manager/providers.d/<tool>.conf`
+
+### Precedence and Override Protection
+- **Precedence:** User provider definitions take precedence over system provider definitions of the same tool name.
+- **Strict Validation:** Malformed `.conf` files (syntax errors, missing `PACKAGE_ATOM`) report immediate actionable errors identifying the exact configuration file.
+- **Built-in Protection:** Built-in providers (`go`, `fixture`, `unslotted`) cannot be overridden accidentally. Overriding a built-in provider requires explicitly defining `OVERRIDE_BUILTIN="true"` in the `.conf` file.
 
 ### Provider Configuration Format
 

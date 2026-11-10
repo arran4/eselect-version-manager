@@ -37,8 +37,32 @@ def fake_installed_packages(atom, eroot=None):
 
 
 import eselect_version_manager.resolver as resolver_mod
+import eselect_version_manager.providers.base as base_mod
+
 resolver_mod.get_installed_packages = fake_installed_packages
 resolver_mod.find_system_executable = lambda cmd: f"/usr/bin/{cmd}"
+
+_real_isfile = os.path.isfile
+_real_access = os.access
+
+def _mock_isfile(p):
+    if p in (
+        "/usr/bin/go-1.21", "/usr/bin/go-1.22", "/usr/bin/go-1.23",
+        "/usr/bin/fixture-tool-1", "/usr/bin/fixture-tool-2"
+    ):
+        return True
+    return _real_isfile(p)
+
+def _mock_access(p, mode):
+    if p in (
+        "/usr/bin/go-1.21", "/usr/bin/go-1.22", "/usr/bin/go-1.23",
+        "/usr/bin/fixture-tool-1", "/usr/bin/fixture-tool-2"
+    ):
+        return True
+    return _real_access(p, mode)
+
+base_mod.os.path.isfile = _mock_isfile
+base_mod.os.access = _mock_access
 
 
 def test_nearest_project_private_overrides_file(tmp_path, monkeypatch):
@@ -200,3 +224,48 @@ def test_malformed_private_project_conf_is_fatal(tmp_path, monkeypatch):
     resolver = Resolver()
     with pytest.raises(StaleProjectRecordError):
         resolver.resolve("go", current_dir=str(proj_dir))
+
+
+def test_nested_module_from_file_with_root_eselect_conf(tmp_path, monkeypatch):
+    """
+    Test that a root .eselect.conf containing VM_GO="from-file" correctly resolves
+    a nested go.mod when invoked from a nested submodule directory.
+    """
+    repo_root = tmp_path / "my_repo"
+    repo_root.mkdir()
+    (repo_root / ".eselect.conf").write_text('VM_GO="from-file"\n')
+
+    sub_mod = repo_root / "modules" / "submod"
+    sub_mod.mkdir(parents=True)
+    (sub_mod / "go.mod").write_text("module example.com/submod\ngo 1.22\ntoolchain go1.22.4\n")
+
+    resolver = Resolver()
+    res = resolver.resolve("go", current_dir=str(sub_mod))
+
+    assert res.package.version == "1.22.4"
+    assert res.project_root == canonicalize_path(str(repo_root))
+
+
+def test_nested_module_honours_gowork_and_gowork_off(tmp_path, monkeypatch):
+    """
+    Test that resolver honours go.work at root and GOWORK=off behaviour.
+    """
+    repo_root = tmp_path / "repo_ws"
+    repo_root.mkdir()
+    (repo_root / ".eselect.conf").write_text('VM_GO="from-file"\n')
+    (repo_root / "go.work").write_text("go 1.21\ntoolchain go1.21.5\n")
+
+    sub_mod = repo_root / "services" / "svc"
+    sub_mod.mkdir(parents=True)
+    (sub_mod / "go.mod").write_text("module example.com/svc\ngo 1.23\ntoolchain go1.23.1\n")
+
+    resolver = Resolver()
+
+    # 1. Default: go.work at root has precedence -> 1.21.5
+    res1 = resolver.resolve("go", current_dir=str(sub_mod))
+    assert res1.package.version == "1.21.5"
+
+    # 2. GOWORK=off ignores go.work, uses submod go.mod -> 1.23.1
+    monkeypatch.setenv("GOWORK", "off")
+    res2 = resolver.resolve("go", current_dir=str(sub_mod))
+    assert res2.package.version == "1.23.1"

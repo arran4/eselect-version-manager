@@ -44,22 +44,21 @@ class BaseProvider(abc.ABC):
         """
         Validate that candidate_path actually belongs to the selected package.
         Prevents executing an executable belonging to a conflicting version.
+        Uses Portage installed-file metadata (package.contents).
         """
-        if package.contents:
-            canonical_cand = os.path.realpath(candidate_path)
-            cand_abs = os.path.abspath(candidate_path)
-            for path in package.contents:
-                if path == cand_abs or os.path.abspath(path) == cand_abs or os.path.realpath(path) == canonical_cand:
-                    return True
+        if not package.contents:
             return False
 
-        # If package.contents is empty (e.g. mock test fixture), require slot/version in path
-        base = os.path.basename(candidate_path)
-        if package.slot and package.slot != "0":
-            if package.slot in candidate_path or package.slot in base:
+        cand_abs = os.path.abspath(candidate_path)
+        canonical_cand = os.path.realpath(candidate_path) if os.path.exists(candidate_path) else None
+
+        for path in package.contents:
+            entry_abs = os.path.abspath(path)
+            if cand_abs == entry_abs:
                 return True
-        if package.version and package.version in candidate_path:
-            return True
+            if canonical_cand and os.path.exists(entry_abs):
+                if os.path.realpath(entry_abs) == canonical_cand:
+                    return True
 
         return False
 
@@ -68,6 +67,7 @@ class BaseProvider(abc.ABC):
         Locate the absolute path to command for the given installed package.
         Guarantees that the resolved executable belongs to the selected package.
         Never falls back to conflicting system executables in /usr/bin.
+        Never returns a nonexistent or non-executable binary.
         """
         # 1. First search package CONTENTS
         if package.contents:
@@ -82,11 +82,7 @@ class BaseProvider(abc.ABC):
                 )
                 if is_match and ("/bin" in path or path.endswith(f"/{command}")):
                     if self.validate_executable(package, command, path):
-                        if os.path.exists(path):
-                            if os.access(path, os.X_OK):
-                                return path
-                        else:
-                            # Test fixture where files might not physically exist on host
+                        if os.path.isfile(path) and os.access(path, os.X_OK):
                             return path
 
         # 2. Check slotted/versioned installation paths
@@ -97,23 +93,24 @@ class BaseProvider(abc.ABC):
             f"/usr/bin/{command}-{package.version}",
         ]
         for loc in versioned_locations:
-            if os.path.exists(loc) and os.access(loc, os.X_OK):
+            if os.path.isfile(loc) and os.access(loc, os.X_OK):
                 if self.validate_executable(package, command, loc):
                     return loc
 
         # 3. Check /usr/bin/{command} ONLY if validated to belong to this package
         unversioned = f"/usr/bin/{command}"
-        if os.path.exists(unversioned) and os.access(unversioned, os.X_OK):
+        if os.path.isfile(unversioned) and os.access(unversioned, os.X_OK):
             if self.validate_executable(package, command, unversioned):
                 return unversioned
 
+        expected = versioned_locations[0] if versioned_locations else f"/usr/bin/{command}"
         raise MissingExecutableError(
             tool=self.name,
             command=command,
             pkg=package.cpv,
-            expected_path=versioned_locations[0],
+            expected_path=expected,
             details={
-                "reason": f"no executable for command '{command}' belonging to package '{package.cpv}' could be validated",
+                "reason": f"no executable for command '{command}' belonging to package '{package.cpv}' could be found or validated",
                 "searched_paths": ", ".join(versioned_locations + [unversioned]),
             }
         )

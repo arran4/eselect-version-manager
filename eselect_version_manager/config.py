@@ -68,18 +68,65 @@ def get_shims_dir() -> str:
 # Matches KEY=VALUE where KEY is [A-Za-z_][A-Za-z0-9_]*
 ASSIGNMENT_RE = re.compile(r'^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)$')
 
+# Regexes for Portage version constraints, series, slots, and atoms
+SLOT_RE = re.compile(r'^:[A-Za-z0-9+_.-]+(/[A-Za-z0-9+_.-]+)?(=)?$')
+VERSION_TERM_RE = re.compile(
+    r'^(>=|<=|>|<|=|~)?'
+    r'(\d+(?:\.\d+)*[a-z]?(?:_(?:alpha|beta|pre|rc|p)\d*)*(?:-r\d+)?\*?)'
+    r'(:[A-Za-z0-9+_.-]+(/[A-Za-z0-9+_.-]+)?(=)?)?$'
+)
+ATOM_TERM_RE = re.compile(
+    r'^(>=|<=|>|<|=|~)?'
+    r'([a-zA-Z0-9+_.-]+/[a-zA-Z0-9+_.-]+(?:-\d+(?:\.\d+)*[a-z]?(?:_(?:alpha|beta|pre|rc|p)\d*)*(?:-r\d+)?\*?)?)'
+    r'(:[A-Za-z0-9+_.-]+(/[A-Za-z0-9+_.-]+)?(=)?)?$'
+)
+
 
 def validate_version_constraint(tool: str, constraint: str) -> None:
     """
     Validate that constraint is syntactically acceptable.
-    Rejects shell metacharacters, control characters, empty strings, etc.
+    Supports keywords (latest, system, from-file), slot syntax (:slot or :slot/subslot),
+    abbreviated series (1.22, 1.22.4), bounded/unbounded ranges (>=1.22 <1.24),
+    and full Portage atoms. Rejects invalid operators, shell metacharacters, and malformed syntax.
     """
     from .errors import InvalidVersionConstraintError
     c = constraint.strip()
     if not c:
         raise InvalidVersionConstraintError(tool, constraint, "constraint cannot be empty")
-    if any(ch in c for ch in (';', '&', '|', '`', '$', '\n', '\r', '\0', '{', '}', '(', ')')):
+
+    if any(ch in c for ch in (';', '&', '|', '`', '$', '\n', '\r', '\0', '{', '}', '(', ')', '"', "'")):
         raise InvalidVersionConstraintError(tool, constraint, "forbidden characters in constraint")
+
+    if c in ("latest", "system", "from-file"):
+        return
+
+    terms = c.split()
+    for term in terms:
+        # Check slot-only syntax: :slot or :slot/subslot
+        if SLOT_RE.match(term):
+            continue
+
+        # Check version term syntax (e.g. 1.22, >=1.22, 1.22.4, 1.22_rc1:1.22)
+        if VERSION_TERM_RE.match(term):
+            continue
+
+        # Check full atom term syntax (e.g. =dev-lang/go-1.22*, dev-lang/go:1.22)
+        if ATOM_TERM_RE.match(term):
+            try:
+                import portage.dep as portage_dep
+                try:
+                    portage_dep.Atom(term)
+                except Exception as e:
+                    raise InvalidVersionConstraintError(tool, constraint, f"invalid Portage atom: {e}")
+            except ImportError:
+                pass
+            continue
+
+        raise InvalidVersionConstraintError(
+            tool,
+            constraint,
+            f"invalid constraint syntax '{term}': must be a valid version, slot (:slot), range, atom, or keyword ('latest', 'system', 'from-file')"
+        )
 
 
 def parse_declarative_config(path: str) -> Dict[str, str]:

@@ -241,6 +241,7 @@ class Resolver:
             scope=selected_scope,
             source_file=selected_source,
             project_root=effective_project_root or cwd,
+            invocation_dir=cwd,
             steps=steps,
         )
 
@@ -252,6 +253,7 @@ class Resolver:
         scope: Scope,
         source_file: Optional[str],
         project_root: str,
+        invocation_dir: str,
         steps: List[ResolutionStep],
     ) -> ResolutionResult:
         tool_name = provider.name
@@ -267,15 +269,16 @@ class Resolver:
                 )
 
             installed_pkgs = get_installed_packages(provider.package_atom, eroot=self.eroot)
+            lookup_dir = invocation_dir or project_root
             if hasattr(provider, "resolve_native_package"):
-                best_pkg, effective_desc = provider.resolve_native_package(project_root, installed_pkgs)
+                best_pkg, effective_desc = provider.resolve_native_package(lookup_dir, installed_pkgs)
                 steps.append(ResolutionStep(
                     scope,
-                    f"from-file ({project_root})",
+                    f"from-file ({lookup_dir})",
                     tool_name,
                     effective_desc,
                     True,
-                    details=f"Derived from native project configuration in {project_root}"
+                    details=f"Derived from native project configuration in {lookup_dir}"
                 ))
                 exec_path = provider.find_executable(best_pkg, command)
                 env_vars = provider.get_environment(best_pkg, exec_path)
@@ -295,14 +298,14 @@ class Resolver:
                     is_system_fallback=False,
                 )
             else:
-                effective_constraint = provider.parse_native_version_file(project_root)
+                effective_constraint = provider.parse_native_version_file(lookup_dir)
                 steps.append(ResolutionStep(
                     scope,
-                    f"from-file ({project_root})",
+                    f"from-file ({lookup_dir})",
                     tool_name,
                     effective_constraint,
                     True,
-                    details=f"Derived from native project configuration in {project_root}"
+                    details=f"Derived from native project configuration in {lookup_dir}"
                 ))
                 constraint_to_match = effective_constraint
         elif val == "system":

@@ -9,7 +9,7 @@ from .config import (
     tool_key,
     tool_from_key,
 )
-from .errors import ConversionConflictError
+from .errors import ConversionConflictError, VersionManagerError, ExitCode
 from .project import (
     canonicalize_path,
     get_project_file_path,
@@ -162,8 +162,12 @@ def convert_to_user(project_root: str, force: bool = False) -> Dict[str, Any]:
         try:
             os.remove(file_path)
             file_removed = True
-        except OSError:
-            pass
+        except OSError as e:
+            raise VersionManagerError(
+                f"failed to remove migrated project file '{file_path}': {e}",
+                exit_code=ExitCode.GENERAL_ERROR,
+                details={"file": file_path, "error": str(e)}
+            )
     else:
         unsets = {k: None for k in file_tools.keys()}
         update_config_file(file_path, unsets)

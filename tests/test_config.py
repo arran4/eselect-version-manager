@@ -50,9 +50,18 @@ def test_update_config_escapes_quotes_and_backslashes(tmp_path):
 def test_validate_version_constraint():
     # Valid constraints
     validate_version_constraint("go", "1.22")
+    validate_version_constraint("go", "1.22.4")
+    validate_version_constraint("go", "1.22_rc1")
+    validate_version_constraint("go", "1.22-r1")
+    validate_version_constraint("go", "1.22*")
     validate_version_constraint("go", ">=1.22 <1.23")
     validate_version_constraint("go", ":1.22")
+    validate_version_constraint("go", ":1.22/1.22")
+    validate_version_constraint("go", ":0")
+    validate_version_constraint("go", "=dev-lang/go-1.22*")
+    validate_version_constraint("go", ">=dev-lang/go-1.22:1.22")
     validate_version_constraint("go", "latest")
+    validate_version_constraint("go", "system")
     validate_version_constraint("go", "from-file")
 
     # Forbidden characters / injection attempts
@@ -64,6 +73,22 @@ def test_validate_version_constraint():
 
     with pytest.raises(InvalidVersionConstraintError):
         validate_version_constraint("go", "")
+
+    # Invalid operators or syntax
+    with pytest.raises(InvalidVersionConstraintError):
+        validate_version_constraint("go", ">>1.22")
+
+    with pytest.raises(InvalidVersionConstraintError):
+        validate_version_constraint("go", "==1.22")
+
+    with pytest.raises(InvalidVersionConstraintError):
+        validate_version_constraint("go", ">=")
+
+    with pytest.raises(InvalidVersionConstraintError):
+        validate_version_constraint("go", "foobar")
+
+    with pytest.raises(InvalidVersionConstraintError):
+        validate_version_constraint("go", "1.22:slot:slot")
 
 
 def test_tool_key_mapping():

@@ -14,7 +14,7 @@ from eselect_version_manager.project import (
     get_project_file_path,
 )
 from eselect_version_manager.config import parse_declarative_config
-from eselect_version_manager.errors import ConversionConflictError
+from eselect_version_manager.errors import ConversionConflictError, VersionManagerError
 
 
 def test_convert_to_file_success(tmp_path, monkeypatch):
@@ -90,3 +90,47 @@ def test_convert_to_user_success(tmp_path, monkeypatch):
 
     # .eselect.conf was removed (as all keys were migrated)
     assert not os.path.exists(get_project_file_path(canon_root))
+
+    # Idempotent repeated call
+    res_repeat = convert_to_user(canon_root)
+    assert res_repeat["converted"] == {}
+
+
+def test_convert_to_file_failure_on_failed_cleanup(tmp_path, monkeypatch):
+    """If removing private configuration fails, complete success must not be reported."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj_dir = tmp_path / "my_project"
+    proj_dir.mkdir()
+    canon_root = canonicalize_path(str(proj_dir))
+
+    save_private_project_config(canon_root, {"VM_GO": "1.26"})
+
+    # Simulate deletion failure (permission denied or OS error)
+    def fail_delete(path):
+        raise VersionManagerError("permission denied on private config", exit_code=1)
+
+    import eselect_version_manager.conversion as conv_mod
+    monkeypatch.setattr(conv_mod, "delete_private_project_config", fail_delete)
+
+    with pytest.raises(VersionManagerError) as exc_info:
+        convert_to_file(canon_root)
+    assert "permission denied" in str(exc_info.value)
+
+
+def test_convert_to_user_failure_on_failed_file_removal(tmp_path, monkeypatch):
+    """If removing .eselect.conf fails on convert_to_user, it must raise VersionManagerError."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    proj_dir = tmp_path / "my_project"
+    proj_dir.mkdir()
+    canon_root = canonicalize_path(str(proj_dir))
+
+    (proj_dir / ".eselect.conf").write_text('VM_GO="1.26"\n')
+
+    def fail_remove(path):
+        raise OSError("Read-only file system")
+
+    monkeypatch.setattr(os, "remove", fail_remove)
+
+    with pytest.raises(VersionManagerError) as exc_info:
+        convert_to_user(canon_root)
+    assert "failed to remove migrated project file" in str(exc_info.value)

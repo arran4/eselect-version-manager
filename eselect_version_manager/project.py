@@ -10,7 +10,7 @@ from .config import (
     tool_key,
     tool_from_key,
 )
-from .errors import StaleProjectRecordError, InvalidConfigError
+from .errors import StaleProjectRecordError, InvalidConfigError, VersionManagerError, ExitCode
 
 PROJECT_ROOT_KEY = "PROJECT_ROOT"
 PROJECT_CONFIG_FILENAME = ".eselect.conf"
@@ -97,8 +97,12 @@ def delete_private_project_config(canonical_path: str) -> bool:
         try:
             os.remove(conf_path)
             return True
-        except OSError:
-            return False
+        except OSError as e:
+            raise VersionManagerError(
+                f"failed to delete private project configuration '{conf_path}': {e}",
+                exit_code=ExitCode.GENERAL_ERROR,
+                details={"file": conf_path, "error": str(e)}
+            )
     return False
 
 
