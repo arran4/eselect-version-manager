@@ -222,13 +222,14 @@ echo "✓ Unsupported shim installation rejected!"
 
 # Register dynamic custom provider
 mkdir -p "${XDG_CONFIG_HOME}/eselect/version-manager/providers.d"
-cat << EOF > "${XDG_CONFIG_HOME}/eselect/version-manager/providers.d/mycustom.conf"
+cat << EOF > "${XDG_CONFIG_HOME}/eselect/version-manager/providers.d/unslotted.conf"
 PACKAGE_ATOM="app-misc/unslotted-fixture"
 COMMANDS="unslotted-tool"
+OVERRIDE_BUILTIN="true"
 EOF
-eselect version-manager shims install mycustom
+eselect version-manager shims install unslotted
 test -x "${HOME}/.local/bin/eselect-version-manager/shims/unslotted-tool"
-echo "✓ Dynamic provider and restricted shims verified!"
+echo "✓ Explicit built-in provider override and shim registration verified!"
 
 # 7. Unslotted package execution through shim
 echo "[Step 7] Testing unslotted fixture execution through shim..."
