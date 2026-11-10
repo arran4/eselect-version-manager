@@ -60,7 +60,8 @@ jobs:
       - name: Python syntax check
         run: |
           echo "=== Checking Python syntax ==="
-          python3 -m py_compile bin/dispatcher $(find eselect_version_manager tests -name "*.py")
+          python3 -m py_compile bin/dispatcher
+          find eselect_version_manager tests -name '*.py' -print0 | xargs -0 -r python3 -m py_compile
 
       - name: Install test dependencies
         run: |
