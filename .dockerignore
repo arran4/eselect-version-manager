@@ -1,0 +1,12 @@
+.git
+.gitignore
+overlay/.git
+site/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+*.pyc
+build/
+dist/
+*.egg-info/
+.tmp_eselect_*

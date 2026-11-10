@@ -17,6 +17,7 @@ nav:
       - User-local shims: shims.md
       - Project file conversion: conversion.md
       - Providers and toolchains: providers.md
+  - Docker images and CI: containers.md
   - Internals:
       - Architecture: architecture.md
       - Project lookup: project-lookup.md
