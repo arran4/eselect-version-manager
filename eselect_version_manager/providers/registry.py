@@ -4,6 +4,7 @@ import os
 from typing import Dict, List, Optional, Set
 from .base import BaseProvider, GenericProvider
 from .go import GoProvider
+from .python import PythonProvider
 from .fixture import FixtureProvider
 from .unslotted import UnslottedFixtureProvider
 from ..config import (
@@ -25,6 +26,16 @@ class ProviderRegistry:
     def register(self, provider: BaseProvider, is_builtin: bool = False) -> None:
         if is_builtin:
             self._builtin_tools.add(provider.name)
+        # Commands have one owner. An override may replace a provider by name,
+        # but must not silently steal a different provider's command.
+        for cmd in provider.commands:
+            existing_owner = self._command_map.get(cmd)
+            if existing_owner and existing_owner != provider.name:
+                raise InvalidConfigError(
+                    provider.name,
+                    f"command '{cmd}' already belongs to provider '{existing_owner}'; "
+                    f"override that provider explicitly rather than declaring a second owner",
+                )
         old_provider = self._providers.get(provider.name)
         if old_provider:
             for old_cmd in old_provider.commands:
@@ -110,6 +121,8 @@ class ProviderRegistry:
 def create_default_registry(eroot: Optional[str] = None) -> ProviderRegistry:
     registry = ProviderRegistry()
     registry.register(GoProvider(), is_builtin=True)
+    registry.register(PythonProvider(), is_builtin=True)
+    registry.register(GenericProvider(name="maven", package_atom="dev-java/maven-bin", commands=["mvn"]), is_builtin=True)
     registry.register(FixtureProvider(), is_builtin=True)
     registry.register(UnslottedFixtureProvider(), is_builtin=True)
 

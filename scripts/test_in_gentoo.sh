@@ -190,8 +190,20 @@ echo "[Step 6] Installing user-local shims..."
 eselect version-manager shims install
 test -x "${HOME}/.local/bin/eselect-version-manager/shims/fixture-tool"
 test -x "${HOME}/.local/bin/eselect-version-manager/shims/go"
+test -x "${HOME}/.local/bin/eselect-version-manager/shims/python3"
+test -x "${HOME}/.local/bin/eselect-version-manager/shims/mvn"
 test -x "${HOME}/.local/bin/eselect-version-manager/shims/unslotted-tool"
 echo "✓ Shims installed and marked executable!"
+
+# 6a. Test real slotted Gentoo Python and pinned dispatcher interpreter
+echo "[Step 6a] Testing slotted Python interpreter through shim..."
+eselect version-manager set --user python latest
+PYTHON_OUT=$(python3 --version)
+assert_contains "Python 3." "${PYTHON_OUT}"
+PYTHON_RES=$(eselect version-manager resolve python)
+assert_contains "dev-lang/python-" "${PYTHON_RES}"
+eselect version-manager unset --user python
+echo "✓ Existing Gentoo Python interpreter selected through shim without recursive dispatch!"
 
 # 6b. Testing unsupported shim rejection and dynamic provider definition
 echo "[Step 6b] Testing unsupported shim rejection..."

@@ -1,100 +1,53 @@
-# Generic Provider Architecture
+# Toolchain providers
 
-`eselect-version-manager` connects tools to Portage packages through a generic internal model:
+A provider maps a tool name to one Portage package and the executable names the user can shim. It selects only **installed** package versions. For example, `go 1.26` is shorthand for a version-series constraint on `dev-lang/go`, not a toolchain download.
 
-```text
-Tool Name
-   ↓
-Portage Package Provider
-   ↓
-Installed Matching Package Version
-   ↓
-Executable Path
-   ↓
-Required Runtime Environment
+## Included providers
+
+| Tool | Gentoo package | Shim commands | Notes |
+| --- | --- | --- | --- |
+| Go | `dev-lang/go` | `go`, `gofmt` | `from-file` reads `go.mod`/`go.work`; sets `GOTOOLCHAIN=local` |
+| Python | `dev-lang/python` | `python`, `python3` | Uses package-owned `python3.13`, `python3.14`, etc.; leaves `python-exec` system defaults unchanged |
+| Maven | `dev-java/maven-bin` | `mvn` | Selects the existing `mvn-${SLOT}` script; Java runtime selection stays with Gentoo's Java tools |
+
+Go versions can only run side by side if the installed ebuilds genuinely permit it. Gentoo already provides separately slotted Python interpreters and Maven versions; **no copied Python/Maven ebuilds are required**.
+
+```sh
+eselect version-manager shims install python maven
+eselect version-manager list python
+eselect version-manager list maven
+eselect version-manager set --project python ':3.14'
+eselect version-manager set --project maven ':3.10'
+python3 --version
+mvn --version
 ```
 
-## Built-in Providers
+An unsatisfied selection fails. `system` delegates to existing system selectors. Neither Python nor Maven currently implements `from-file`; it remains an explicit opt-in for Go.
 
-### 1. Go Provider (`go`)
-- **Package Atom:** `dev-lang/go`
-- **Exposed Commands:** `go`, `gofmt`
-- **Environment Injected:**
-  - `GOTOOLCHAIN=local`: Enforces Gentoo Portage management by strictly preventing unauthorized network toolchain downloads.
-  - `GOROOT`: Configured to the package's specific root directory (e.g. `/usr/lib/go/1.22`).
-- **Native Version Detection (`from-file`):**
-  - Search order: respects workspace precedence (`go.work` in current directory or any ancestor overrides module-level `go.mod`).
-  - Supports nested modules when no `go.work` is active, resolving `go.mod` relative to the actual invocation working directory rather than only repository root.
-  - Honours `GOWORK` environment variable:
-    - `GOWORK="off"`: disables workspace mode entirely and inspects `go.mod`.
-    - `GOWORK="/path/to/go.work"`: targets the designated workspace file explicitly.
-    - unset or `auto`: searches upwards from the working directory for `go.work`, then `go.mod`.
-  - `go <version>`: specifies minimum required version (`>= <version>`), allowing newer installed toolchains to satisfy requirements.
-  - `toolchain <version>`: specifies preferred toolchain (e.g. `toolchain go1.22.4`). If installed, the preferred version is selected; if missing, newer installed toolchains (`>= 1.22.4`) satisfy it. If no installed toolchain satisfies `>= toolchain_ver`, resolution fails with an error even if an older installed package meets the `go` minimum line, ensuring strict compliance with Go's `GOTOOLCHAIN=local` specification.
-- **Executable Validation:** Validates that candidate binaries belong strictly to the selected package's Portage `CONTENTS` metadata. Substring path heuristics are strictly rejected, and missing or non-executable binaries are never returned.
+## Define a generic provider
 
-### 2. Test Fixture Provider (`fixture`)
-- **Package Atom:** `app-misc/version-manager-fixture`
-- **Exposed Commands:** `fixture-tool`, `fixture-helper`
-- **Slotted Co-Installation:** Demonstrates multi-binary co-installable toolchain slots (`SLOT="1"` and `SLOT="2"`).
-- **Environment Injected:** `VM_FIXTURE_HOME`, `VM_FIXTURE_SLOT`.
+Create `~/.config/eselect/version-manager/providers.d/example.conf`:
 
-### 3. Unslotted Fixture Provider (`unslotted`)
-- **Package Atom:** `app-misc/unslotted-fixture`
-- **Exposed Commands:** `unslotted-tool`
-- **Behavior:** Validates that unslotted packages (`SLOT="0"`) function seamlessly alongside slotted toolchains.
-
-## Dynamic Providers (`providers.d/`)
-
-Users and administrators can add support for any Portage-managed package without modifying Python source code. Simply drop a declarative `.conf` file into either:
-- System: `/etc/eselect/version-manager/providers.d/<tool>.conf` (respects `EROOT`)
-- User: `${XDG_CONFIG_HOME:-~/.config}/eselect/version-manager/providers.d/<tool>.conf`
-
-### Precedence and Override Protection
-- **Precedence:** User provider definitions take precedence over system provider definitions of the same tool name.
-- **Strict Validation:** Malformed `.conf` files (syntax errors, missing `PACKAGE_ATOM`) report immediate actionable errors identifying the exact configuration file.
-- **Built-in Protection:** Built-in providers (`go`, `fixture`, `unslotted`) cannot be overridden accidentally. Overriding a built-in provider requires explicitly defining `OVERRIDE_BUILTIN="true"` in the `.conf` file.
-
-### Provider Configuration Format
-
-```bash
-# /etc/eselect/version-manager/providers.d/python.conf
-PACKAGE_ATOM="dev-lang/python"
-COMMANDS="python python3"
+```sh
+PACKAGE_ATOM="dev-util/example"
+COMMANDS="example example-helper"
 ```
 
-```bash
-# ~/.config/eselect/version-manager/providers.d/rust.conf
-PACKAGE_ATOM="dev-lang/rust-bin"
-COMMANDS="rustc cargo rustfmt"
+Then install the shim and select an installed package version:
+
+```sh
+eselect version-manager shims install example
+eselect version-manager set --project example latest
 ```
 
-Once defined, shims can be installed via `eselect version-manager shims install <tool>`, and version constraints managed via `set`, `get`, and `list`.
+Provider configuration is declarative. Commands must be owned by the selected installed package; a provider cannot invent a binary path or download software.
 
-## Implementing a Programmatic Provider
+Providers with the same name follow user-over-system precedence. To replace a built-in provider, set `OVERRIDE_BUILTIN="true"` explicitly. A command may have only one provider owner; use a provider-name override rather than defining another provider that silently steals a command.
 
-New built-in providers inherit from `BaseProvider`:
+## Environment and native requirements
 
-```python
-from eselect_version_manager.providers.base import BaseProvider
-from eselect_version_manager.models import InstalledPackage
-from typing import List, Dict
+The Go provider sets `GOROOT` when appropriate and `GOTOOLCHAIN=local` to avoid implicit downloads. Python relies on a package-owned versioned interpreter; Maven uses its Gentoo-provided versioned script and the existing Java runtime selection.
 
-class RustProvider(BaseProvider):
-    @property
-    def name(self) -> str:
-        return "rust"
+Custom environment synthesis requires a programmatic provider adapter rather than executable shell code in `.eselect.conf`. This is a version selector, not an environment-script runner.
 
-    @property
-    def package_atom(self) -> str:
-        return "dev-lang/rust-bin"
-
-    @property
-    def commands(self) -> List[str]:
-        return ["rustc", "cargo", "rustfmt", "rustdoc"]
-
-    def get_environment(self, package: InstalledPackage, executable_path: str) -> Dict[str, str]:
-        return {
-            "RUSTC": executable_path,
-        }
-```
+The synthetic test providers live in the [separate CI fixture overlay](https://github.com/arran4/eselect-version-manager-overlay/tree/feat/seed-portage-overlay-and-fixtures/tests/portage-overlay). Their fake Go ebuilds are not real toolchain backports.

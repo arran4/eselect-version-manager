@@ -1,81 +1,44 @@
-# Architecture Overview
+# Architecture
 
-`eselect-version-manager` is a Gentoo-native, project-aware toolchain version manager implemented as an `eselect` module (`app-eselect/eselect-version-manager`).
+The `eselect` module is a command-line interface. A Python dispatcher performs project lookup, queries Portage's installed package database and executes the selected binary. It does not install packages or change system-wide `eselect` symlinks.
 
-## Core Philosophy
-
-- **Portage owns package management:** Portage handles package dependencies, compilation, slotting, and installed package databases (`/var/db/pkg`). `eselect-version-manager` never downloads binaries, alters package files, or attempts to replace Portage.
-- **`eselect-version-manager` owns selection and dispatch:** It identifies active toolchain versions across project, user, and system scopes and dispatches commands to the appropriate installed Portage binaries via user-local shims.
-- **Zero maintainer overhead:** Standard Gentoo ebuild maintainers do not need to introduce special metadata files or registration manifests.
-
-## High-Level Architecture Diagram
-
-```
-+-------------------------------------------------------------------+
-|                        User Invocation                            |
-|             (e.g., 'go build', 'gofmt', 'fixture-tool')           |
-+-------------------------------------------------------------------+
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-|                 User-Local Shim ($HOME/.local/bin)                |
-|           ~/.local/bin/eselect-version-manager/shims/<tool>       |
-+-------------------------------------------------------------------+
-                                  |
-               executes with arguments, stdin/out/err
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-|               Shared Dispatcher / Resolver Backend                |
-|             /usr/libexec/eselect-version-manager/dispatcher       |
-+-------------------------------------------------------------------+
-         |                        |                       |
-         v                        v                       v
-+------------------+    +-------------------+   +--------------------+
-|  Project Lookup  |    | Precedence Engine |   |  Portage Database  |
-|  - .eselect.conf |    | - Invocation      |   |  - /var/db/pkg     |
-|  - SHA-256 conf  |    | - Project scope   |   |  - Version match   |
-|  - O(depth) hash |    | - User / System   |   |  - Slot & binaries |
-+------------------+    +-------------------+   +--------------------+
-                                  |
-                     Resolves to target binary
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-|           Installed Portage Binary (with Environment)             |
-|       e.g., /usr/lib/go/1.22/bin/go [GOTOOLCHAIN=local, GOROOT]   |
-+-------------------------------------------------------------------+
+```text
+PATH shim (go, python3, mvn, ...)
+    → dispatcher
+    → project/private/user/system preference lookup
+    → Portage VDB package matching (version, SLOT, CONTENTS)
+    → package-owned executable + provider environment
 ```
 
-## Component Responsibilities
+## Components
 
-### 1. `modules/version-manager.eselect`
-The thin Bash interface conforming strictly to Gentoo `eselect` standards:
-- Clean modular structure with `describe_*` and `do_*` actions.
-- Respects `ROOT`, `EROOT`, and `EPREFIX`.
-- Contains no executable logic at global scope.
-- Forwards subcommands to the backend dispatcher.
+| Path | Responsibility |
+| --- | --- |
+| `modules/version-manager.eselect` | Standard `eselect` actions |
+| `eselect_version_manager/cli.py` | Command parsing and messages |
+| `project.py`, `config.py` | Canonical project roots and declarative configuration |
+| `resolver.py` | Scope precedence, errors and execution target |
+| `portage_backend.py` | Installed packages, version constraints and cache |
+| `providers/` | Package-to-command mappings; Go, Python and Maven support |
+| `shims.py` | User-local shim lifecycle |
+| `conversion.py` | Copy selections between private storage and `.eselect.conf` |
 
-### 2. `eselect_version_manager/` (Python Package)
-The shared resolution engine:
-- **`config.py`**: Strictly declarative Gentoo-style assignment parser. Never invokes shell code or backticks. Provides atomic transactional file writing.
-- **`project.py`**: Deterministic path canonicalization and O(depth) private project registration using SHA-256 digests.
-- **`portage_backend.py`**: Native interface to Portage's vartree (`/var/db/pkg`), using Portage's `vercmp` and `match_from_list` algorithms with an mtime-invalidated cache.
-- **`providers/`**: Generic provider abstraction mapping tool names to Portage package atoms, multi-command suites, environment variables, and native version file readers.
-- **`resolver.py`**: Strict 6-tier precedence engine with detailed explanation capabilities.
-- **`conversion.py`**: Predictable, transactional conversion between `.eselect.conf` and private project storage.
-- **`shims.py`**: Management of executable shims in `$HOME/.local/bin/eselect-version-manager/shims/`.
-- **`doctor.py`**: Diagnostic verification of PATH, permissions, and project health.
+The dispatcher trusts a candidate binary only when it is executable and appears in the selected package's installed `CONTENTS` metadata. This prevents selecting a package by version and executing a different package's `/usr/bin` wrapper.
 
-## Cache Invalidation Strategy
+## Package inventory and caching
 
-To minimize dispatcher latency on the hot execution path, package metadata can be cached in `${XDG_CACHE_HOME:-$HOME/.cache}/eselect/version-manager/portage_packages.json`.
-- The cache stores the filesystem modification timestamp (`mtime`) of `/var/db/pkg`.
-- Whenever Portage merges or unmerges any package, `/var/db/pkg`'s mtime changes automatically.
-- If the mtime changes or the cache is missing or corrupted, the dispatcher performs a fast re-scan.
-- A corrupted or missing cache never impacts user configuration.
+Portage's installed package database under `/var/db/pkg` is authoritative. Cache entries live under `$XDG_CACHE_HOME/eselect/version-manager/`. Invalidation inspects the relevant category, installed package entries and Portage's update counter; it does not rely solely on the top-level VDB directory timestamp.
 
-## Recursion Safety and System Bypass
+A cache miss or corrupt cache triggers a fresh scan. Package installation, upgrade and removal are tested in the Gentoo container suite.
 
-- **Recursion Guard:** When dispatching, `_ESELECT_VM_ACTIVE_TOOL=<command>` is exported into the environment. If a toolchain script or child process attempts to re-invoke the same shim recursively, the dispatcher aborts immediately with exit code `19` (`RECURSION_DETECTED`).
-- **Bypass Mechanism:** If `VM_BYPASS=1` or `ESELECT_VM_BYPASS=1` is set in the environment, shims bypass resolution entirely and execute the underlying system binary from `PATH` directly.
+## Recursion and bypass
+
+The dispatcher sets `_ESELECT_VM_ACTIVE_TOOL` for an active command, failing when a shim calls itself again. `ESELECT_VM_BYPASS=1` (also `VM_BYPASS=1`) delegates to the existing system command.
+
+The installed Python dispatcher must use an absolute interpreter shebang fixed by the Gentoo ebuild. Using `/usr/bin/env python3` would re-enter a `python3` shim if the shim directory precedes `/usr/bin`.
+
+## Gentoo boundaries
+
+Portage installs toolchains and defines which versions may coexist. Existing `eselect` modules continue to manage system defaults. Project selections alter only the command process and descendants.
+
+The separate [companion overlay](https://github.com/arran4/eselect-version-manager-overlay) contains the ebuild. Its synthetic CI packages are isolated under `tests/portage-overlay`, not installed on normal machines.

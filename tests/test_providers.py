@@ -463,3 +463,62 @@ def test_dynamic_provider_error_reporting_and_precedence(tmp_path):
     assert reg.get_provider("rust").package_atom == "dev-lang/rust"
     reg.load_providers_from_directory(str(user_dir), is_user=True)
     assert reg.get_provider("rust").package_atom == "dev-lang/rust-bin"
+
+
+def test_builtin_python_and_maven_providers():
+    """Use Gentoo's existing slots rather than duplicating ebuilds."""
+    registry = create_default_registry()
+    assert registry.get_provider("python3").package_atom == "dev-lang/python"
+    assert registry.get_provider("python").name == "python"
+    assert registry.get_provider("mvn").package_atom == "dev-java/maven-bin"
+    assert registry.get_provider("mvn").name == "maven"
+
+
+def test_python_provider_selects_package_owned_versioned_binary(tmp_path):
+    from eselect_version_manager.providers.python import PythonProvider
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "python3.14"
+    binary.write_text("#!/bin/sh\\necho Python 3.14\\n")
+    binary.chmod(0o755)
+
+    provider = PythonProvider()
+    pkg = InstalledPackage(
+        "dev-lang/python-3.14.10", "dev-lang", "python", "3.14.10", "r0",
+        "3.14", "", [str(binary)]
+    )
+    assert provider.find_executable(pkg, "python") == str(binary)
+    assert provider.find_executable(pkg, "python3") == str(binary)
+
+    wrong_pkg = InstalledPackage(
+        "dev-lang/python-3.13.18", "dev-lang", "python", "3.13.18", "r0",
+        "3.13", "", [str(binary)]
+    )
+    with pytest.raises(MissingExecutableError):
+        provider.find_executable(wrong_pkg, "python3")
+
+
+def test_maven_provider_selects_slotted_mvn_binary(tmp_path):
+    registry = create_default_registry()
+    provider = registry.get_provider("mvn")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mvn-3.10"
+    binary.write_text("#!/bin/sh\\necho Apache Maven 3.10\\n")
+    binary.chmod(0o755)
+    pkg = InstalledPackage(
+        "dev-java/maven-bin-3.10.0", "dev-java", "maven-bin", "3.10.0", "r0",
+        "3.10", "", [str(binary)]
+    )
+    assert provider.find_executable(pkg, "mvn") == str(binary)
+
+
+def test_provider_command_ownership_collision_is_rejected():
+    registry = ProviderRegistry()
+    registry.register(GoProvider(), is_builtin=True)
+    with pytest.raises(InvalidConfigError):
+        registry.register(GenericProvider("other-go", "app-misc/other-go", ["go"]))
+
+    assert registry.get_provider("go").name == "go"
+    assert registry.find_provider_for_command("go").name == "go"

@@ -6,3 +6,7 @@ __pycache__/
 build/
 dist/
 .tmp_eselect_*
+
+# Local checkout of the dedicated Gentoo Portage overlay
+/overlay/
+/site/
