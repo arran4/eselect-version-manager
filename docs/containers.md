@@ -60,7 +60,7 @@ The Dockerfile pins the Gentoo stage3 and Portage image digests; update these de
 
 ## Canonical release workflow
 
-The [single CI/CD workflow](../.github/workflows/ci.yml) follows the repository-specific principles of the [canonical GitHub Actions reference](https://github.com/arran4/blog/blob/main/content/post/2026/043-canonical-github-actions-ci-cd-super-reference/index.md). The separate Pages workflow remains because Pages deployment has a different event and permission boundary.
+The [single CI/CD workflow](https://github.com/arran4/eselect-version-manager/blob/main/.github/workflows/ci.yml) follows the repository-specific principles of the [canonical GitHub Actions reference](https://github.com/arran4/blog/blob/main/content/post/2026/043-canonical-github-actions-ci-cd-super-reference/index.md). The separate Pages workflow remains because Pages deployment has a different event and permission boundary.
 
 From GitHub Actions → **CI** → Run workflow on `main`, choose `release-patch`, `release-minor` or `release-major`. For the **first** release, specify `release_version_override=0.1.0` explicitly; there is no previous tag from which to calculate a version. The workflow will:
 
