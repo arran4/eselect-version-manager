@@ -43,6 +43,10 @@ Private project settings override matching values in `.eselect.conf`. Unspecifie
 
 The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. [Docker guide](docs/containers.md) documents local builds and the versioned GHCR demo image built after a release. The demo uses clearly labelled slotted fixture tools; it does not include mock Go compilers.
 
+## Releases
+
+Release tags, Docker images and the Portage overlay follow the [validated CI/CD release procedure](docs/containers.md#canonical-release-workflow). For the first version use the manual `release-patch` mode with `release_version_override=0.1.0`. The overlay's separately generated `Manifest` is required for user installation; the CI-generated checkout archive is not a release.
+
 ## Documentation and development
 
 The [technical documentation](docs/index.md) covers [selection scopes](docs/precedence-and-scopes.md), [shims](docs/shims.md), [configuration migration](docs/conversion.md), [provider support](docs/providers.md), [project lookup](docs/project-lookup.md) and [architecture](docs/architecture.md).
