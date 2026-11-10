@@ -22,9 +22,14 @@ assert_contains() {
 echo "[Step 1] Setting up local Portage test overlay..."
 mkdir -p /etc/portage/repos.conf
 cat << 'EOF' > /etc/portage/repos.conf/test-overlay.conf
-[test-overlay]
-location = /workspace/packaging/test-overlay
+[eselect-version-manager-overlay]
+location = /workspace/overlay
 priority = 100
+auto-sync = false
+
+[eselect-version-manager-fixtures]
+location = /workspace/overlay/tests/portage-overlay
+priority = 110
 auto-sync = false
 EOF
 
@@ -56,8 +61,8 @@ chown -R portage:portage /var/cache/distfiles
 chmod 0644 /var/cache/distfiles/eselect-version-manager-0.1.0.tar.gz
 
 echo "Generating Manifest for eselect-version-manager from genuine tarball..."
-rm -f /workspace/packaging/test-overlay/app-eselect/eselect-version-manager/Manifest
-ebuild --force /workspace/packaging/test-overlay/app-eselect/eselect-version-manager/eselect-version-manager-0.1.0.ebuild manifest
+rm -f /workspace/overlay/app-eselect/eselect-version-manager/Manifest
+ebuild --force /workspace/overlay/app-eselect/eselect-version-manager/eselect-version-manager-0.1.0.ebuild manifest
 
 # 2. Emerge packages from overlay
 echo "[Step 2] Emerging eselect-version-manager and fixture packages from genuine source archive..."
@@ -95,9 +100,9 @@ rm -rf /var/db/pkg/app-misc/version-manager-fixture-2.0-r1
 
 # 2. Genuine Portage emerge and unmerge cache invalidation
 echo "Testing genuine Portage emerge & unmerge cache invalidation..."
-cp /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild \
-   /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
-ebuild --force /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild manifest
+cp /workspace/overlay/tests/portage-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild \
+   /workspace/overlay/tests/portage-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
+ebuild --force /workspace/overlay/tests/portage-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild manifest
 emerge --oneshot --quiet-build=y =app-misc/version-manager-fixture-2.0-r1
 LIST_EMERGE=$(eselect version-manager list fixture)
 assert_contains "2.0-r1" "${LIST_EMERGE}"
@@ -110,8 +115,8 @@ if echo "${LIST_UNMERGE}" | grep -F "2.0-r1" >/dev/null; then
     exit 1
 fi
 echo "✓ Genuine unmerge package immediately removed from version list!"
-rm -f /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
-ebuild --force /workspace/packaging/test-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild manifest
+rm -f /workspace/overlay/tests/portage-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0-r1.ebuild
+ebuild --force /workspace/overlay/tests/portage-overlay/app-misc/version-manager-fixture/version-manager-fixture-2.0.ebuild manifest
 
 # Re-emerge fixture slot 2 for subsequent tests
 emerge --oneshot --quiet-build=y app-misc/version-manager-fixture:2
