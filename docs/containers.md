@@ -58,10 +58,22 @@ PR CI uses the `e2e` stage with Docker Buildx and the GitHub Actions cache (`typ
 
 The Dockerfile pins the Gentoo stage3 and Portage image digests; update these deliberately.
 
-## Release image
+## Canonical release workflow
 
-The [release-image workflow](https://github.com/arran4/eselect-version-manager/actions/workflows/release-image.yml) runs when a GitHub release is published with a version tag such as `v0.1.0`. It checks that the tag commit belongs to `main`, builds and tests the `e2e` target against the **tagged GitHub archive**, builds the `demo` target, smoke-tests it, then publishes `ghcr.io/arran4/eselect-version-manager:v0.1.0`.
+The [single CI/CD workflow](../.github/workflows/ci.yml) follows the repository-specific principles of the [canonical GitHub Actions reference](https://github.com/arran4/blog/blob/main/content/post/2026/043-canonical-github-actions-ci-cd-super-reference/index.md). The separate Pages workflow remains because Pages deployment has a different event and permission boundary.
 
-The overlay must contain the matching versioned ebuild. The release Docker build generates a Manifest *inside the image* to validate the retrieved distfile. The companion overlay still needs its own **generated and committed release Manifest** before a normal user can `emerge` from it. Image publication must not be treated as evidence that this cross-repository packaging step is complete.
+From GitHub Actions → **CI** → Run workflow on `main`, choose `release-patch`, `release-minor` or `release-major`. For the **first** release, specify `release_version_override=0.1.0` explicitly; there is no previous tag from which to calculate a version. The workflow will:
 
-Do not push development or CI images to public release tags. Release images use a distinct verification path and `VM_SOURCE=release`, not an archive fabricated from the current checkout.
+1. Run Python validation and the real Gentoo container E2E against the selected commit.
+2. Refuse to release if `main` advanced after testing, or the chosen tag already exists.
+3. Push an immutable annotated `vX.Y.Z` tag.
+4. In the **same workflow run**, check out that tag and fetch its real GitHub archive through Portage; run the tagged archive E2E and demo image smoke tests.
+5. Push the verified `ghcr.io/arran4/eselect-version-manager:vX.Y.Z` image, then create the single GitHub Release.
+
+External stable `vX.Y.Z` tag pushes use the same release gate. To retry a failed publication **without incrementing the version**, run the workflow with `publish-tag` and select that existing tag as the workflow ref. Do not move published tags. Pre-release SemVer suffixes are not supported yet because they need an explicit Portage PV translation.
+
+The Docker build copies the reviewed `0.1.0` ebuild template to a temporary versioned ebuild *inside the build context* when required. This does not modify the companion overlay repository. Its independent release-update workflow detects published source releases and opens a separate, verified ebuild/Manifest PR.
+
+No `9999` live ebuild is needed for this workflow: checkout builds already package the chosen source through the same ebuild, whereas release builds fetch the immutable tagged archive. Adding a live ebuild would be a separate opt-in capability, not a prerequisite.
+
+The public image runs as an unprivileged `demo` user and contains **synthetic fixture commands**, not real slotted Go compilers. The GHCR package may need to be made public in package settings for anonymous pulls. **No first release exists until the workflow actually succeeds.**

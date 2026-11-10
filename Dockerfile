@@ -59,10 +59,12 @@ RUN set -eu; \
 # CI target: run all real Gentoo container tests against the same installed
 # package/Portage repository used by the demo image. Never publish this stage.
 FROM installed AS e2e
+ARG VM_VERSION
+ARG VM_SOURCE
 COPY scripts/ /workspace/scripts/
 RUN set -eu; \
     rm -f /etc/portage/repos.conf/eselect-version-manager.conf; \
-    bash /workspace/scripts/test_in_gentoo.sh
+    VM_VERSION="${VM_VERSION}" VM_SOURCE="${VM_SOURCE}" bash /workspace/scripts/test_in_gentoo.sh
 
 # Public demonstration image: real Portage-installed version manager, but the
 # side-by-side fixture programs are intentionally synthetic and clearly named.
