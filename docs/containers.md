@@ -90,7 +90,7 @@ The Dockerfile pins the Gentoo stage3 and Portage image digests; update these de
 
 The [single CI/CD workflow](https://github.com/arran4/eselect-version-manager/blob/main/.github/workflows/ci.yml) follows the repository-specific principles of the [canonical GitHub Actions reference](https://github.com/arran4/blog/blob/main/content/post/2026/043-canonical-github-actions-ci-cd-super-reference/index.md). The separate Pages workflow remains because Pages deployment has a different event and permission boundary.
 
-From GitHub Actions → **CI** → Run workflow on `main`, choose `release-patch`, `release-minor` or `release-major`. For the **first** release, specify `release_version_override=0.1.0` explicitly; there is no previous tag from which to calculate a version. The workflow will:
+From GitHub Actions → **CI** → Run workflow on `main`, choose `release-patch`, `release-minor` or `release-major`. For the **first** release, selecting `release-patch` without an override produces `v0.1.0`. Use `release_version_override` only for an intentionally different initial version; an initial `release-minor` or `release-major` requires an explicit override. The workflow will:
 
 1. Run Python validation and the real Gentoo container E2E against the selected commit.
 2. Refuse to release if `main` advanced after testing, or the chosen tag already exists.
