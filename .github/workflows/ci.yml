@@ -79,6 +79,12 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color=false
 
+      - name: Test first-release and subsequent release version selection
+        run: |
+          bash -n scripts/calculate_release_tag.sh
+          bash -n tests/test_release_tag.sh
+          bash tests/test_release_tag.sh
+
       - name: Run standalone test runner
         run: |
           python3 tests/test_runner.py
@@ -236,24 +242,8 @@ jobs:
             echo 'main advanced after validation; retry against the new commit' >&2
             exit 1
           }
-          if [[ -n "$VERSION_OVERRIDE" ]]; then
-            tag="v${VERSION_OVERRIDE#v}"
-          else
-            latest="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
-            base="${latest#v}"
-            if [[ -z "$latest" ]]; then
-              echo 'First release requires release_version_override (e.g. 0.1.0)' >&2
-              exit 2
-            fi
-            IFS='.' read -r major minor patch <<< "$base"
-            case "$RELEASE_MODE" in
-              release-major) major=$((major+1)); minor=0; patch=0 ;;
-              release-minor) minor=$((minor+1)); patch=0 ;;
-              release-patch) patch=$((patch+1)) ;;
-              *) echo "Unsupported release mode: $RELEASE_MODE" >&2; exit 2 ;;
-            esac
-            tag="v$major.$minor.$patch"
-          fi
+          latest="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          tag="$(bash scripts/calculate_release_tag.sh "$RELEASE_MODE" "$VERSION_OVERRIDE" "$latest")"
           [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
             echo "Invalid stable Gentoo release tag: $tag" >&2
             exit 2
