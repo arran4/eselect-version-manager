@@ -45,7 +45,7 @@ The source [Dockerfile](Dockerfile) has `e2e` and `demo` stages. The demo precon
 
 ## Releases
 
-Release tags, Docker images and the Portage overlay follow the [validated CI/CD release procedure](docs/containers.md#canonical-release-workflow). For the first version, run `release-patch` on `main` (defaults to `v0.1.0` when no stable tags exist); use `release_version_override` only to choose a different initial version. The overlay's separately generated `Manifest` is required for user installation; the CI-generated checkout archive is not a release.
+Release tags, Docker images and the Portage overlay follow the [validated CI/CD release procedure](docs/containers.md#canonical-release-workflow). If a release fails after creating the tag, recover it from the **current `main` workflow** using `publish-tag` with the existing numeric `release_version_override` (e.g. `0.1.0`); do not create or move another tag. For the first version, run `release-patch` on `main` (defaults to `v0.1.0` when no stable tags exist); use `release_version_override` only to choose a different initial version. The overlay's separately generated `Manifest` is required for user installation; the CI-generated checkout archive is not a release.
 
 ## Documentation and development
 
