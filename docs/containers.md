@@ -30,6 +30,8 @@ python3 --version
 
 The two fixture projects use committed-style `.eselect.conf` files with `VM_FIXTURE=":1"` and `VM_FIXTURE=":2"`. This shows that project-aware selection works without changing a global `eselect` symlink.
 
+Run `eselect version-manager resolve fixture` **from either project directory** to inspect its selected slot. In the default `/home/demo` directory, no fixture version is selected; an attempted `system` resolution is expected to fail because the demonstration image does not install an unslotted system `fixture-tool`.
+
 The image runs as an unprivileged `demo` user. GitHub Packages visibility may need to be set to public before anonymous pulls work.
 
 ## Sync the latest companion overlay (opt-in)

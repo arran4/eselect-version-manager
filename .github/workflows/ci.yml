@@ -149,6 +149,10 @@ jobs:
           set -euo pipefail
           docker run --rm --workdir /home/demo/projects/slot-1 eselect-version-manager:ci-demo fixture-tool | grep -F 'version 1.0 (slot 1)'
           docker run --rm --workdir /home/demo/projects/slot-2 eselect-version-manager:ci-demo fixture-tool | grep -F 'version 2.0 (slot 2)'
+          # Resolve from the configured project roots, not /home/demo: the
+          # default root has no fixture pin and correctly falls back to system.
+          docker run --rm --workdir /home/demo/projects/slot-1 eselect-version-manager:ci-demo eselect version-manager resolve fixture | grep -F 'Package:      app-misc/version-manager-fixture-1.0 (slot 1)'
+          docker run --rm --workdir /home/demo/projects/slot-2 eselect-version-manager:ci-demo eselect version-manager resolve fixture | grep -F 'Package:      app-misc/version-manager-fixture-2.0 (slot 2)'
           docker run --rm eselect-version-manager:ci-demo python3 --version
           test "$(docker run --rm eselect-version-manager:ci-demo id -un)" = demo
           docker run --rm --user root eselect-version-manager:ci-demo sh -c '
@@ -369,7 +373,10 @@ jobs:
           docker run --rm --workdir /home/demo/projects/slot-2 "$IMAGE" fixture-tool | grep -F 'version 2.0 (slot 2)'
           docker run --rm "$IMAGE" python3 --version
           test "$(docker run --rm "$IMAGE" id -un)" = demo
-          docker run --rm "$IMAGE" eselect version-manager resolve fixture
+          # Only the two configured demo projects pin the fixture tool. The
+          # default /home/demo cwd legitimately has no system fixture binary.
+          docker run --rm --workdir /home/demo/projects/slot-1 "$IMAGE" eselect version-manager resolve fixture | grep -F 'Package:      app-misc/version-manager-fixture-1.0 (slot 1)'
+          docker run --rm --workdir /home/demo/projects/slot-2 "$IMAGE" eselect version-manager resolve fixture | grep -F 'Package:      app-misc/version-manager-fixture-2.0 (slot 2)'
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
