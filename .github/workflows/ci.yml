@@ -105,7 +105,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: arran4/eselect-version-manager-overlay
-          ref: 69cb51a67ac650e25bb73bc2920d074b398841ee
+          ref: 62d1b6a1433ef388e8057978129ae13a9dbfadae
           path: overlay
 
       - name: Set up Docker Buildx
@@ -317,7 +317,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: arran4/eselect-version-manager-overlay
-          ref: 69cb51a67ac650e25bb73bc2920d074b398841ee
+          ref: 62d1b6a1433ef388e8057978129ae13a9dbfadae
           path: overlay
       - name: Prepare versioned ebuild in disposable Docker context
         shell: bash
